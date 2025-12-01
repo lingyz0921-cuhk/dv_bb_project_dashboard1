@@ -651,7 +651,7 @@ if master_path and hh_path:
             
         # Row 3
         st.markdown("---")
-        st.subheader("7. Hierarchical Debt Distribution")
+        st.subheader("5. Hierarchical Debt Distribution")
         st.markdown("**Hierarchy:** Urban/Rural > Region > Province > City Tier")
         
         chart_sun = plot_debt_sunburst(df)
@@ -672,7 +672,7 @@ if master_path and hh_path:
                 st.info("Not enough city data matched to coordinates.")
             
         with row3_col2:
-            st.subheader("5. City Debt Rankings (Top 5 vs Bottom 5)")
+            st.subheader("7. City Debt Rankings (Top 5 vs Bottom 5)")
             chart_rank = plot_city_rank(df)
             if chart_rank: st_pyecharts(chart_rank, height="450px")
 
