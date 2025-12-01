@@ -189,46 +189,15 @@ def clean_city_name_for_map(name):
 @st.cache_data
 def load_and_clean_data(master_file, hh_file):
     try:
-        # ==========================================
-        # 优化策略：只读取必要的列 (usecols)
-        # ==========================================
+        # 只读取需要的列
+        master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income', 
+                       'city_lab', 'city_level', 'region', 'prov']
+        hh_cols = ['hhid', 'house01num']
         
-        # 1. 定义我们分析中真正用到的列名
-        # 注意：请确保这些列名在你的CSV中是真实存在的，拼写要一致
-        needed_cols_master = [
-            'hhid',         # 唯一标识
-            'rural',        # 城乡
-            'total_debt',   # 总负债
-            'total_asset',  # 总资产
-            'weight_hh',    # 权重
-            'total_income', # 总收入
-            'city_lab',     # 城市代码
-            'city_level',   # 城市层级
-            'region',       # 区域
-            'prov'          # 省份
-        ]
+        master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
+        hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
+        df = master.merge(hh[['hhid', 'house01num']], on='hhid', how='left')
         
-        needed_cols_hh = [
-            'hhid', 
-            'house01num'    # 房产数量(你原来的merge代码里用到了)
-        ]
-
-        # 2. 为了防止报错，先预读取一行来检查列是否存在
-        # (因为不同年份CHFS的列名可能微调，这一步是保险)
-        preview_master = pd.read_csv(master_file, nrows=1)
-        valid_cols_master = [c for c in needed_cols_master if c in preview_master.columns]
-        
-        preview_hh = pd.read_csv(hh_file, nrows=1)
-        valid_cols_hh = [c for c in needed_cols_hh if c in preview_hh.columns]
-
-        # 3. 正式读取（只读筛选后的列）
-        master = pd.read_csv(master_file, usecols=valid_cols_master, low_memory=False)
-        hh = pd.read_csv(hh_file, usecols=valid_cols_hh, low_memory=False)
-        
-        # 4. 合并数据
-        df = master.merge(hh, on='hhid', how='left')
-        
-        # 5. 后续处理 (保持不变)
         numeric_cols = ['rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income']
         for col in numeric_cols:
             if col in df.columns:
