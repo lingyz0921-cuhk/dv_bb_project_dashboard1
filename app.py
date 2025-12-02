@@ -1,14 +1,14 @@
+
 import streamlit as st
 import pandas as pd
 import re
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Line
 from pyecharts.globals import ThemeType
+from pyecharts.commons.utils import JsCode
 from streamlit_echarts import st_pyecharts
 import plotly.express as px
 import os
-import numpy as np
-from pypinyin import pinyin, Style # <--- NEW IMPORT for Pinyin conversion
 
 # ==========================================
 # 0. 全局配置与颜色定义
@@ -16,7 +16,6 @@ from pypinyin import pinyin, Style # <--- NEW IMPORT for Pinyin conversion
 COLOR_BLUE = "#5470c6"
 COLOR_YELLOW = "#fac858"
 COLOR_BG = "#ffffff"
-PLOTLY_CONFIG = {'displayModeBar': False} # Added for Plotly charts
 
 st.set_page_config(
     page_title="中国家庭债务分析大屏 | CHFS Dashboard",
@@ -36,14 +35,11 @@ st.markdown("""
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
     h1, h2, h3 {font-family: 'Microsoft YaHei', sans-serif; color: #333;}
-    /* Adjust Streamlit Subheader spacing */
-    h3 {margin-top: 0.5rem; margin-bottom: 0.8rem;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 核心字典：城市代码映射与坐标 (仍然保持中文键)
-#    这些字典的键将**在数据加载时**被转换为拼音以匹配处理后的DataFrame列。
+# 1. 核心字典：城市代码映射与坐标 (保持正确版本)
 # ==========================================
 # (代码映射表与坐标字典保持不变，为节省篇幅此处折叠，请保留原有的完整字典)
 COMPREHENSIVE_CITY_CODE_MAP = {
@@ -142,146 +138,64 @@ PROVINCE_COORDS = {
     "台湾": [121.50, 25.03]
 }
 
-# 动态生成拼音版本的字典，以便在数据处理后进行查找
-# 这些将在 `load_and_clean_data` 中被创建并用于匹配
-PINYIN_COMPREHENSIVE_CITY_CODE_MAP = {k: None for k in COMPREHENSIVE_CITY_CODE_MAP.keys()}
-PINYIN_COMPREHENSIVE_CITY_COORDS = {}
-PINYIN_PROVINCE_COORDS = {}
-
 # ==========================================
 # 2. 数据处理与清洗函数
 # ==========================================
 
-# Helper function to convert Chinese to Pinyin with capitalized first letter
-def _to_pinyin_capitalized(text):
-    if pd.isna(text):
-        return None
-    text_str = str(text).strip()
-    if not re.search(r'[\u4e00-\u9fff]', text_str): # If no Chinese characters, return as is
-        return text_str
-    
-    # Extract only Chinese characters for conversion
-    chinese_chars = "".join(re.findall(r'[\u4e00-\u9fff]', text_str))
-    if not chinese_chars:
-        return text_str # Return original if no Chinese chars were found despite regex match
-        
-    pinyin_list = pinyin(chinese_chars, style=Style.NORMAL)
-    pinyin_full = "".join([s[0] for s in pinyin_list])
-    
-    # Apply specific Pinyin corrections/standardizations if needed
-    if pinyin_full.lower() == 'huhehaote': return 'Hohhot'
-    if pinyin_full.lower() == 'lasa': return 'Lhasa'
-    if pinyin_full.lower() == 'xian': return 'Xi\'an'
-    if pinyin_full.lower() == 'huaian': return 'Huai\'an'
-    if pinyin_full.lower() == 'jilin' and len(chinese_chars) < 3: # '吉林' city vs '吉林' province
-        return 'Jilin City' 
-    if pinyin_full.lower() == 'neimenggu': return 'Inner Mongolia'
-    if pinyin_full.lower() == 'xizang': return 'Tibet'
-    if pinyin_full.lower() == 'xianggang': return 'Hong Kong'
-    if pinyin_full.lower() == 'aomen': return 'Macao'
-
-    return pinyin_full.capitalize()
-
-
-# --- 关键清洗函数：应用新的映射逻辑 (现在期望输入是拼音) ---
-def convert_city_name_advanced(val, pinyin_city_code_map):
-    """
-    根据城市代码映射或清理后的城市名称，返回对应的拼音城市名称。
-    此函数现在期望 `val` 已经是中文或数字代码，并在内部处理转换为拼音。
-    """
+# --- 关键清洗函数：应用新的映射逻辑 ---
+def convert_city_name_advanced(val):
     if pd.isna(val): return None
     val_str = str(val).strip()
-
-    # 1. 尝试将原始值（可能是中文）转换为拼音
-    pinyin_val = _to_pinyin_capitalized(val_str)
-    
-    # 2. 如果是数字代码，查找拼音映射
+    if re.search(r'[\u4e00-\u9fff]', val_str):
+        clean_name = re.sub(r'[市县地区壮族回族维吾尔自治区省]$', '', val_str)
+        clean_name = clean_name.replace('广西壮族', '广西').replace('内蒙古', '内蒙古')
+        clean_name = clean_name.replace('新疆维吾尔', '新疆').replace('宁夏回族', '宁夏')
+        return clean_name
     try:
         code_val = float(val_str)
         code_int = int(code_val)
-        mapped_name = pinyin_city_code_map.get(code_int) # 使用拼音代码映射表
+        mapped_name = COMPREHENSIVE_CITY_CODE_MAP.get(code_int)
         if mapped_name: return mapped_name
         if '.' in val_str:
             code_parts = val_str.split('.')
             if len(code_parts) == 2:
                 main_code = int(code_parts[0][:6])
-                mapped_name = pinyin_city_code_map.get(main_code)
+                mapped_name = COMPREHENSIVE_CITY_CODE_MAP.get(main_code)
                 if mapped_name: return mapped_name
     except (ValueError, TypeError):
-        pass # Not a numeric code, proceed to string matching
-
-    # 3. 如果是已转换为拼音的字符串，进行匹配和清理
-    if pinyin_val:
-        # 直接匹配拼音字典的键 (PINYIN_COMPREHENSIVE_CITY_COORDS)
-        if pinyin_val in PINYIN_COMPREHENSIVE_CITY_COORDS:
-            return pinyin_val
-            
-        # 尝试移除常见后缀以提高匹配率
-        cleaned_pinyin = re.sub(r'(City|County|District|Region|Prefecture|AutonomousRegion|Province|Shi|Xian|Qu|Zizhiqu)$', '', pinyin_val, flags=re.IGNORECASE).strip()
-        if cleaned_pinyin in PINYIN_COMPREHENSIVE_CITY_COORDS:
-            return cleaned_pinyin
-        
-        # 针对特定城市进行进一步匹配 (如果必要)
-        if cleaned_pinyin.lower() == 'jilin' and 'Jilin City' in PINYIN_COMPREHENSIVE_CITY_COORDS:
-            return 'Jilin City'
-
+        pass
+    if re.search(r'\d+[\u4e00-\u9fff]+', val_str):
+        chinese_part = re.findall(r'[\u4e00-\u9fff]+', val_str)[0]
+        clean_name = re.sub(r'[市县地区壮族回族维吾尔自治区省]$', '', chinese_part)
+        return clean_name
     return None
 
 def clean_city_name_for_map(name):
-    """
-    最终清理和验证城市名称，确保它匹配拼音版的 COMPREHENSIVE_CITY_COORDS 键。
-    这个函数现在期望输入已经是拼音名称。
-    """
     if pd.isna(name): return None
     name_str = str(name).strip()
-    
-    if name_str in PINYIN_COMPREHENSIVE_CITY_COORDS: return name_str
-    
-    # 尝试移除常见后缀 (以防之前的步骤没有完全移除)
-    cleaned_name = re.sub(r'(City|County|District|Region|Prefecture|AutonomousRegion|Province|Shi|Xian|Qu|Zizhiqu)$', '', name_str, flags=re.IGNORECASE).strip()
-    if cleaned_name in PINYIN_COMPREHENSIVE_CITY_COORDS: return cleaned_name
-    
-    # 再次进行大小写不敏感匹配
-    for standard_name_pinyin in PINYIN_COMPREHENSIVE_CITY_COORDS.keys():
-        if cleaned_name.lower() == standard_name_pinyin.lower():
-            return standard_name_pinyin
-            
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]+', name_str)
+    if not chinese_chars: return None
+    clean_name = chinese_chars[0]
+    if clean_name in COMPREHENSIVE_CITY_COORDS: return clean_name
+    for standard_name in COMPREHENSIVE_CITY_COORDS.keys():
+        if clean_name in standard_name or standard_name in clean_name:
+            return standard_name
+    for suffix in ['市', '州', '盟']:
+        candidate = clean_name + suffix
+        if candidate in COMPREHENSIVE_CITY_COORDS: return candidate
+    if len(clean_name) >= 2: return clean_name
     return None
 
 @st.cache_data
 def load_and_clean_data(master_file, hh_file):
-    global PINYIN_COMPREHENSIVE_CITY_CODE_MAP, PINYIN_COMPREHENSIVE_CITY_COORDS, PINYIN_PROVINCE_COORDS
-
     try:
-        # 动态创建拼音版本的字典
-        PINYIN_COMPREHENSIVE_CITY_COORDS = {
-            _to_pinyin_capitalized(k): v for k, v in COMPREHENSIVE_CITY_COORDS.items() if _to_pinyin_capitalized(k) is not None
-        }
-        PINYIN_PROVINCE_COORDS = {
-            _to_pinyin_capitalized(k): v for k, v in PROVINCE_COORDS.items() if _to_pinyin_capitalized(k) is not None
-        }
-        # 更新 COMPREHENSIVE_CITY_CODE_MAP 的值也为拼音
-        PINYIN_COMPREHENSIVE_CITY_CODE_MAP = {
-            code: _to_pinyin_capitalized(city_name) 
-            for code, city_name in COMPREHENSIVE_CITY_CODE_MAP.items() 
-            if _to_pinyin_capitalized(city_name) is not None
-        }
-
-
         # 只读取需要的列
         master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income', 
                        'city_lab', 'city_level', 'region', 'prov']
         hh_cols = ['hhid', 'house01num']
         
-        # 处理 Streamlit 文件上传或本地文件路径
-        if isinstance(master_file, str):
-            master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
-            hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
-        else: # Streamlit uploaded file (BytesIO)
-            master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
-            hh_file.seek(0) # Reset pointer for hh_file in case it was read before
-            hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
-            
+        master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
+        hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
         df = master.merge(hh[['hhid', 'house01num']], on='hhid', how='left')
         
         numeric_cols = ['rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income']
@@ -293,30 +207,20 @@ def load_and_clean_data(master_file, hh_file):
         df['total_debt'] = df['total_debt'].fillna(0).clip(lower=0)
         df['total_income'] = df['total_income'].fillna(0).clip(lower=0)
         
-        # ==== 核心改动：将原始中文列转换为拼音，然后进行映射 ====
         if 'city_lab' in df.columns:
-            df['city_raw'] = df['city_lab'] # 保留原始中文
-            # 先将原始值（代码或中文）转换为拼音或映射到的拼音
-            df['city_pinyin_temp'] = df['city_lab'].apply(lambda x: convert_city_name_advanced(x, PINYIN_COMPREHENSIVE_CITY_CODE_MAP))
-            # 再进行最终的清理和匹配，确保与 PINYIN_COMPREHENSIVE_CITY_COORDS 兼容
-            df['final_city_name'] = df['city_pinyin_temp'].apply(clean_city_name_for_map)
+            df['city_raw'] = df['city_lab']
+            df['city_mapped'] = df['city_lab'].apply(convert_city_name_advanced)
+            df['final_city_name'] = df['city_mapped'].apply(clean_city_name_for_map)
         else:
             df['final_city_name'] = None
 
-        if 'prov' in df.columns:
-            # 直接将省份列的中文转换为拼音，并与 PINYIN_PROVINCE_COORDS 键进行匹配
-            df['prov_pinyin_temp'] = df['prov'].apply(_to_pinyin_capitalized)
-            df['prov'] = df['prov_pinyin_temp'].apply(lambda x: x if x in PINYIN_PROVINCE_COORDS else None)
-        # =======================================================
-        
         if 'city_level' in df.columns:
             def map_city_tier(level):
                 if pd.isna(level): return None
                 level = str(level).strip()
-                # 兼容中文和英文分级
-                if '一线' in level or 'Tier 1' in level or 'New Tier 1' in level: return 'Tier 1 / New Tier 1'
-                elif '二线' in level or 'Tier 2' in level: return 'Tier 2'
-                elif '三线' in level or '以下' in level or '非一线' in level or 'Tier 3' in level: return 'Tier 3 & Below'
+                if '一线' in level: return 'Tier 1 / New Tier 1'
+                elif '二线' in level: return 'Tier 2'
+                elif '三线' in level or '以下' in level or '非一线' in level: return 'Tier 3 & Below'
                 return 'Other'
             df['tier_label'] = df['city_level'].apply(map_city_tier)
 
@@ -331,8 +235,6 @@ def load_and_clean_data(master_file, hh_file):
 
 # ==========================================
 # 3. 图表生成函数
-#    这些函数现在将期望 `df['final_city_name']` 和 `df['prov']` 已经是拼音。
-#    并且 `COMPREHENSIVE_CITY_COORDS` 和 `PROVINCE_COORDS` 的查找也应该对应拼音。
 # ==========================================
 
 AXIS_GRAY = "#6E7079"
@@ -440,8 +342,7 @@ def plot_regional_stack(df):
 
 def plot_china_map_plotly(df):
     """图3"""
-    # 这里 `df['prov']` 已经经过拼音转换
-    df_prov = df.groupby('prov', group_keys=False, dropna=True).apply(
+    df_prov = df.groupby('prov', group_keys=False).apply(
         lambda x: pd.Series({
             'avg_debt': (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
@@ -454,9 +355,10 @@ def plot_china_map_plotly(df):
     df_prov['ratio_display'] = df_prov['d_i_ratio'].round(2)
 
     def get_lat_lon(prov_name):
-        # 查找 PINYIN_PROVINCE_COORDS
-        if prov_name in PINYIN_PROVINCE_COORDS: return pd.Series([PINYIN_PROVINCE_COORDS[prov_name][1], PINYIN_PROVINCE_COORDS[prov_name][0]])
-        return pd.Series([np.nan, np.nan]) # Changed to np.nan for consistency
+        name_str = str(prov_name)
+        for k, v in PROVINCE_COORDS.items():
+            if k in name_str: return pd.Series([v[1], v[0]])
+        return pd.Series([None, None])
 
     df_prov[['lat', 'lon']] = df_prov['prov'].apply(get_lat_lon)
     df_plot = df_prov.dropna(subset=['lat', 'lon'])
@@ -527,10 +429,8 @@ def plot_city_rank(df):
     if 'final_city_name' not in df.columns: return None
     df_valid = df.dropna(subset=['final_city_name'])
 
-    if df_valid.empty: return None
-
     # 1. 数据计算
-    df_city_agg = df_valid.groupby('final_city_name', dropna=True).apply(
+    df_city_agg = df_valid.groupby('final_city_name').apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_weight': x['weight_hh'].sum()
@@ -540,16 +440,12 @@ def plot_city_rank(df):
     df_city_agg['weighted_avg_debt'] = df_city_agg['w_debt'] / df_city_agg['w_weight']
     df_city_agg = df_city_agg.sort_values('weighted_avg_debt', ascending=False)
 
-    if len(df_city_agg) < 10: # Ensure there are enough cities to show top5/bottom5
-        st.info("Not enough distinct cities in the data to show a ranking chart.")
-        return None
-
     top5 = df_city_agg.head(5).reset_index(drop=True)
     bottom5 = df_city_agg.tail(5).sort_values('weighted_avg_debt', ascending=True).reset_index(drop=True)
     
     overall_val = (df_valid['total_debt'] * df_valid['weight_hh']).sum() / df_valid['weight_hh'].sum() / 10000
 
-    # 2. X 轴标签 (现在会显示拼音城市名)
+    # 2. X 轴标签
     x_data = [f"Top{i+1}\n{n}" for i,n in enumerate(top5['final_city_name'])] + \
              ["National\nAvg"] + \
              [f"Last{i+1}\n{n}" for i,n in enumerate(bottom5['final_city_name'])]
@@ -584,7 +480,7 @@ def plot_city_rank(df):
 
     # 4. 绘图
     c = (
-        Bar(init_opts=opts.InitOpts(theme=ThemeType.LIGHT))
+        Bar()
         .add_xaxis(x_data)
         .add_yaxis(
             "Avg Debt (10k)", 
@@ -604,7 +500,7 @@ def plot_geo_debt_map_comprehensive(df):
     """图6: 城市债务地图"""
     if 'final_city_name' not in df.columns: return None
     
-    df_city = df.groupby('final_city_name', dropna=True).apply(
+    df_city = df.groupby('final_city_name').apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_income': (x['total_income'] * x['weight_hh']).sum(),
@@ -614,18 +510,17 @@ def plot_geo_debt_map_comprehensive(df):
 
     df_city['avg_debt'] = df_city['w_debt'] / df_city['sum_weight']
     df_city['d_i_ratio'] = df_city.apply(
-        lambda x: x['w_debt'] / x['w_income'] if x['w_income'] > 0 else np.nan, axis=1 # Use np.nan
+        lambda x: x['w_debt'] / x['w_income'] if x['w_income'] > 0 else 0, axis=1
     )
 
     def get_lat_lon_city(city_name):
-        # 查找 PINYIN_COMPREHENSIVE_CITY_COORDS
-        if city_name in PINYIN_COMPREHENSIVE_CITY_COORDS:
-            coords = PINYIN_COMPREHENSIVE_CITY_COORDS[city_name]
+        if city_name in COMPREHENSIVE_CITY_COORDS:
+            coords = COMPREHENSIVE_CITY_COORDS[city_name]
             return pd.Series([coords[1], coords[0]])
-        return pd.Series([np.nan, np.nan]) # Changed to np.nan for consistency
+        return pd.Series([None, None])
 
     df_city[['lat', 'lon']] = df_city['final_city_name'].apply(get_lat_lon_city)
-    df_plot = df_city.dropna(subset=['lat', 'lon', 'd_i_ratio']) # Ensure ratio is also present
+    df_plot = df_city.dropna(subset=['lat', 'lon'])
     
     if df_plot.empty: return None
 
@@ -647,7 +542,6 @@ def plot_geo_debt_map_comprehensive(df):
     )
 
     fig.update_layout(
-        height=600, # Explicit height for Plotly charts
         geo=dict(center=dict(lat=36, lon=104), projection_scale=3.0, showland=True, landcolor="#f4f4f4", showcountries=True, countrycolor="#dedede"),
         margin={"r":0,"t":40,"l":0,"b":0},
         coloraxis_colorbar=dict(title="D/I Ratio")
@@ -661,25 +555,14 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    # 确保用于路径的列没有 NaN，否则 Plotly 会报错
-    df_sun['tier_label'] = df_sun['tier_label'].fillna('Unknown')
-    df_sun['region_en'] = df_sun['region_en'].fillna('Unknown')
-    df_sun['prov'] = df_sun['prov'].fillna('Unknown') # `prov` 列现在是拼音
-
     required_cols = ['rural_str', 'region_en', 'prov', 'tier_label']
     for col in required_cols:
-        if col not in df_sun.columns: 
-            st.warning(f"Sunburst chart missing required column: {col}")
-            return None
+        if col not in df_sun.columns: return None
+        df_sun[col] = df_sun[col].fillna('Unknown')
     
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
-    # 过滤掉负债为0的家庭，以免在旭日图中占据空间
-    df_agg = df_sun[df_sun['weighted_debt'] > 0].groupby(required_cols)['weighted_debt'].sum().reset_index()
+    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
     
-    if df_agg.empty: 
-        st.info("Insufficient data (or no debt) to create Sunburst Chart.")
-        return None
-
     fig = px.sunburst(
         df_agg, path=['rural_str', 'region_en', 'prov', 'tier_label'],
         values='weighted_debt', 
@@ -702,33 +585,24 @@ with st.sidebar:
     master_path, hh_path = None, None
     
     if upload_files:
-        files_dict = {f.name: f for f in upload_files}
-        for name in files_dict.keys():
-            if "master" in name.lower(): master_path = files_dict[name]
-            if "hh" in name.lower(): hh_path = files_dict[name]
+        for f in upload_files:
+            if "master" in f.name: master_path = f
+            if "hh" in f.name: hh_path = f
     
-    # 尝试加载本地默认文件
-    if not master_path and os.path.exists(DEFAULT_MASTER):
+    if not master_path and os.path.exists("chfs2019_master_202112.csv"):
+        master_path = "chfs2019_master_202112.csv"
+        hh_path = "chfs2019_hh_202112.csv"
+    elif not master_path and os.path.exists(DEFAULT_MASTER):
         master_path = DEFAULT_MASTER
-    if not hh_path and os.path.exists(DEFAULT_HH): # 只有当master_path找到时，才去找hh_path
         hh_path = DEFAULT_HH
         
     st.info("若未上传文件，将尝试加载默认路径或当前目录文件。")
-    
-    st.markdown("---")
-    st.header("🗺️ 地图配置") # Added map configuration to sidebar
-    map_level = st.selectbox(
-        "选择地图粒度",
-        options=["Provincial", "City"],
-        index=0,
-        help="选择地图的可视化粒度：省份或城市。"
-    )
 
-st.title("🇨🇳 中国家庭债务分析大屏")
-st.markdown("### 宏观区域与城市分析")
+st.title("🇨🇳 China Household Finance Survey (CHFS) Analysis")
+st.markdown("### Macro-Regional & City Analysis")
 
 if master_path and hh_path:
-    with st.spinner("正在加载和处理数据..."):
+    with st.spinner("Loading and Processing Data..."):
         df = load_and_clean_data(master_path, hh_path)
 
     if df is not None:
@@ -737,76 +611,72 @@ if master_path and hh_path:
         weighted_avg_debt = (df['total_debt'] * df['weight_hh']).sum() / total_weight
         weighted_avg_income = (df['total_income'] * df['weight_hh']).sum() / total_weight
         debt_ratio = weighted_avg_debt / weighted_avg_income if weighted_avg_income > 0 else 0
-        
-        # 加权计算有负债家庭的比例
-        indebted_households_weight = df[df['total_debt'] > 0]['weight_hh'].sum()
-        total_households_weight = df['weight_hh'].sum()
-        households_with_debt_ratio = indebted_households_weight / total_households_weight if total_households_weight > 0 else 0
+        households_with_debt = df[df['total_debt'] > 0]['weight_hh'].sum() / total_weight
 
-
-        kpi_cols[0].metric("家庭平均债务", f"¥{weighted_avg_debt/10000:,.1f} 万") # Adjusted to 10k RMB
-        kpi_cols[1].metric("家庭平均收入", f"¥{weighted_avg_income/10000:,.1f} 万") # Adjusted to 10k RMB
-        kpi_cols[2].metric("债务收入比", f"{debt_ratio:.1%}", delta_color="inverse")
-        kpi_cols[3].metric("有负债家庭比例", f"{households_with_debt_ratio:.1%}") # New KPI
+        kpi_cols[0].metric("Avg Household Debt", f"¥{weighted_avg_debt:,.0f}")
+        kpi_cols[1].metric("Avg Household Income", f"¥{weighted_avg_income:,.0f}")
+        kpi_cols[2].metric("Debt-to-Income Ratio", f"{debt_ratio:.1%}", delta_color="inverse")
+        #kpi_cols[3].metric("Indebted Households", f"{households_with_debt:.1%}")
 
         st.markdown("---")
         
         # Row 1
-        st.header("🔍 1. 宏观概览：城乡与区域对比")
         row1_col1, row1_col2 = st.columns([1, 1])
         with row1_col1:
-            st.subheader("1.1 城乡债务负担与风险")
-            st_pyecharts(plot_urban_rural(df), height="380px")
+            st.subheader("1. Urban vs Rural Debt & Risk")
+            st_pyecharts(plot_urban_rural(df), height="400px")
         with row1_col2:
-            st.subheader("1.2 区域债务构成与风险水平")
+            st.subheader("2. Regional Debt & Risk")
             chart_reg = plot_regional_stack(df)
-            if chart_reg: st_pyecharts(chart_reg, height="380px")
-            else: st.info("区域数据不足。")
+            if chart_reg: st_pyecharts(chart_reg, height="400px")
 
-        st.markdown("---")
-        
-        # Row 2 - Geographic Map
-        st.header(f"🗺️ 2. 地理分布：债务负担与风险")
-        st.subheader(f"2.1 {map_level} 债务地图") # Dynamic title based on selection
-        
-        # 调用合并后的地图函数
-        fig_map_combined = plot_geo_debt_map_comprehensive(df) if map_level == "City" else plot_china_map_plotly(df)
-        if fig_map_combined:
-            st.plotly_chart(fig_map_combined, use_container_width=True, config=PLOTLY_CONFIG)
-        else:
-            st.warning(f"没有足够的 {map_level} 数据或坐标匹配失败来生成地图。")
-            
-        st.markdown("---")
-
-        # Row 3 - Sunburst Chart (within an expander)
-        st.header("🧱 3. 债务结构分解")
-        with st.expander("点击展开：债务旭日图 (城乡 > 区域 > 省份 > 城市分级)", expanded=False):
-            chart_sun = plot_debt_sunburst(df)
-            if chart_sun:
-                st.plotly_chart(chart_sun, use_container_width=True, config=PLOTLY_CONFIG)
+        # Row 2
+        row2_col1, row2_col2 = st.columns([1, 1])
+        with row2_col1:
+            st.subheader("3. Provincial Debt & Risk Map ")
+            fig_map = plot_china_map_plotly(df)
+            if fig_map:
+                st.plotly_chart(fig_map, use_container_width=True)
             else:
-                st.warning("旭日图所需数据缺失或不足。")
-                
-        st.markdown("---")
-
-        # Row 4 - City Tier Box Plot and City Ranking
-        st.header("📉 4. 城市详细对比")
-        row3_col1, row3_col2 = st.columns([1, 1])
-        with row3_col1:
-            st.subheader("4.1 城市分级债务分布 (箱线图)")
+                st.warning("No provincial data found.")
+            
+        with row2_col2:
+            st.subheader("4. City Tier Leverage Distribution ")
+            # 修改这里：调用新的箱线图函数
             chart_tier = plot_city_tier_boxplot(df)
             if chart_tier: 
-                st.plotly_chart(chart_tier, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(chart_tier, use_container_width=True)
             else:
-                st.info("城市分级债务分布数据不足。")
+                st.info("Insufficient data for distribution analysis.")
+            
+        # Row 3
+        st.markdown("---")
+        st.subheader("5. Hierarchical Debt Distribution")
+        st.markdown("**Hierarchy:** Urban/Rural > Region > Province > City Tier")
+        
+        chart_sun = plot_debt_sunburst(df)
+        if chart_sun:
+            st.plotly_chart(chart_sun, use_container_width=True)
+        else:
+            st.warning("Data missing for Sunburst Chart.")
+    
+
+        # Row 4
+        row3_col1, row3_col2 = st.columns([1, 1])
+        with row3_col1:
+            st.subheader("6. Key City Debt & Risk Map")
+            chart_geo = plot_geo_debt_map_comprehensive(df)
+            if chart_geo: 
+                st.plotly_chart(chart_geo, use_container_width=True)
+            else: 
+                st.info("Not enough city data matched to coordinates.")
             
         with row3_col2:
-            st.subheader("4.2 城市债务排名 (前5与后5)")
+            st.subheader("7. City Debt Rankings (Top 5 vs Bottom 5)")
             chart_rank = plot_city_rank(df)
             if chart_rank: st_pyecharts(chart_rank, height="450px")
-            else: st.info("城市排名数据不足。")
 
     else:
         st.error("无法处理数据，请检查文件格式。")
 else:
-    st.warning("⚠️ 数据文件未找到。请上传 CSV 文件或确保默认文件存在。")
+    st.warning("⚠️ Data files not found. Please upload CSVs.")
