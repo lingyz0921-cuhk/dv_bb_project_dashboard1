@@ -4,3 +4,4 @@ pyecharts
 streamlit-echarts
 plotly
 openpyxl
+pypinyin
