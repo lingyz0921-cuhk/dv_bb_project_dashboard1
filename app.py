@@ -7,7 +7,7 @@ from pyecharts.globals import ThemeType
 from streamlit_echarts import st_pyecharts
 import plotly.express as px
 import os
-import numpy as np 
+import numpy as np
 
 # ==========================================
 # 0. Global Configuration and Color Definition
@@ -209,14 +209,14 @@ def clean_city_name_for_map(name):
 def load_and_clean_data(master_file, hh_file):
     try:
         # 只读取需要的列
-        master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income', 
+        master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income',
                        'city_lab', 'city_level', 'region', 'prov']
         hh_cols = ['hhid', 'house01num']
-        
+
         master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
         hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
         df = master.merge(hh[['hhid', 'house01num']], on='hhid', how='left')
-        
+
         numeric_cols = ['rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income']
         for col in numeric_cols:
             if col in df.columns:
@@ -225,7 +225,7 @@ def load_and_clean_data(master_file, hh_file):
         df = df[df['weight_hh'] > 0].copy()
         df['total_debt'] = df['total_debt'].fillna(0).clip(lower=0)
         df['total_income'] = df['total_income'].fillna(0).clip(lower=0)
-        
+
         if 'city_lab' in df.columns:
             df['city_raw'] = df['city_lab']
             df['city_mapped'] = df['city_lab'].apply(convert_city_name_advanced)
@@ -246,7 +246,7 @@ def load_and_clean_data(master_file, hh_file):
         if 'region' in df.columns:
              region_mapping = {'东部': 'East', '中部': 'Central', '西部': 'West', '东北': 'Northeast'}
              df['region_en'] = df['region'].map(region_mapping).fillna(df['region'])
-             
+
         return df
     except Exception as e:
         st.error(f"数据加载失败: {e}")
@@ -268,7 +268,7 @@ def plot_urban_rural(df):
             'avg_income': (x['total_income'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
         }), include_groups=False
     ).reset_index()
-    
+
     df_rural['avg_debt_10k'] = df_rural['avg_debt'] / 10000
     df_rural['d_i_ratio'] = df_rural['avg_debt'] / df_rural['avg_income']
     df_rural['rural_name'] = df_rural['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -303,33 +303,33 @@ def plot_urban_rural(df):
 def plot_regional_stack(df):
     """图2"""
     if 'region_en' not in df.columns: return None
-    
+
     df_agg = df.groupby(['region_en', 'rural']).apply(
-        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(), 
+        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
         include_groups=False
     ).reset_index(name='avg')
-    
+
     pivot = df_agg.pivot(index='region_en', columns='rural', values='avg').fillna(0)
     regions = pivot.index.tolist()
     urban_data = (pivot[0] / 10000).round(2).tolist()
     rural_data = (pivot[1] / 10000).round(2).tolist()
-    
+
     df_ratio = df.groupby('region_en').apply(
         lambda x: pd.Series({
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'total_w_income': (x['total_income'] * x['weight_hh']).sum()
         }), include_groups=False
     ).reset_index()
-    
+
     df_ratio = df_ratio.set_index('region_en').reindex(regions).reset_index()
     df_ratio['d_i_ratio'] = df_ratio['total_w_debt'] / df_ratio['total_w_income']
     ratio_data = df_ratio['d_i_ratio'].round(2).tolist()
-    
+
     bar = (
         Bar(init_opts=opts.InitOpts(theme=ThemeType.LIGHT))
         .add_xaxis(regions)
         .add_yaxis("Urban Debt", urban_data, stack="stack1", color=COLOR_BLUE, bar_width="40%")
-        .add_yaxis("Rural Debt", rural_data, stack="stack1", color="#72b0ea") 
+        .add_yaxis("Rural Debt", rural_data, stack="stack1", color="#72b0ea")
         .extend_axis(
             yaxis=opts.AxisOpts(
                 name=RIGHT_AXIS_NAME, type_="value", min_=0, position="right", name_location="end",
@@ -348,12 +348,12 @@ def plot_regional_stack(df):
             legend_opts=opts.LegendOpts(pos_top="0%")
         )
     )
-    
+
     line = (
         Line()
         .add_xaxis(regions)
         .add_yaxis(
-            RIGHT_AXIS_NAME, ratio_data, yaxis_index=1, color=COLOR_YELLOW, 
+            RIGHT_AXIS_NAME, ratio_data, yaxis_index=1, color=COLOR_YELLOW,
             symbol="circle", symbol_size=8, is_smooth=True, linestyle_opts=opts.LineStyleOpts(width=3), z=10
         )
     )
@@ -381,12 +381,12 @@ def plot_china_map_plotly(df):
 
     df_prov[['lat', 'lon']] = df_prov['prov'].apply(get_lat_lon)
     df_plot = df_prov.dropna(subset=['lat', 'lon'])
-    
+
     if df_plot.empty: return None
 
     fig = px.scatter_geo(
         df_plot, lat='lat', lon='lon', size='avg_debt_10k', color='ratio_display',
-        hover_name='prov', size_max=35, color_continuous_scale='RdYlBu_r', 
+        hover_name='prov', size_max=35, color_continuous_scale='RdYlBu_r',
         scope='asia', title="Provincial Debt Map: Volume vs. Risk"
     )
     fig.update_layout(
@@ -402,13 +402,13 @@ def plot_city_tier_boxplot(df):
     改动：从 Ratio 改为 绝对金额，以展示明显的层级差异
     """
     if 'tier_label' not in df.columns: return None
-    
+
     # 1. 数据准备
     df_plot = df[df['tier_label'] != 'Other'].copy()
-    
+
     # 2. 数据清洗：只保留有负债的家庭
     df_valid = df_plot[df_plot['total_debt'] > 0]
-    
+
     if df_valid.empty: return None
 
     # 3. 定义排序逻辑
@@ -416,15 +416,15 @@ def plot_city_tier_boxplot(df):
 
     # 4. 绘制箱线图
     fig = px.box(
-        df_valid, 
-        x="tier_label", 
+        df_valid,
+        x="tier_label",
         y="total_debt",  # <--- 关键修改：看绝对金额，不再看比例
         title="Distribution of Household Total Debt Amount (by Tier)",
         color_discrete_sequence=[COLOR_BLUE], # 统一使用主题蓝
-        category_orders={"tier_label": tier_order}, 
+        category_orders={"tier_label": tier_order},
         notched=True
     )
-    
+
     # 5. 样式优化
     fig.update_layout(
         height=400,
@@ -437,10 +437,10 @@ def plot_city_tier_boxplot(df):
             # 【关键】设置显示范围：0 到 300万。
             # 如果你的数据里大部分人负债都在100万以内，可以改成 1000000
             # 这样能过滤掉极少数的超级富豪，让箱体看起来更清楚
-            range=[0, 3000000] 
+            range=[0, 3000000]
         )
     )
-    
+
     return fig
 
 def plot_city_rank(df):
@@ -461,7 +461,7 @@ def plot_city_rank(df):
 
     top5 = df_city_agg.head(5).reset_index(drop=True)
     bottom5 = df_city_agg.tail(5).sort_values('weighted_avg_debt', ascending=True).reset_index(drop=True)
-    
+
     overall_val = (df_valid['total_debt'] * df_valid['weight_hh']).sum() / df_valid['weight_hh'].sum() / 10000
 
     # 2. X 轴标签
@@ -502,7 +502,7 @@ def plot_city_rank(df):
         Bar()
         .add_xaxis(x_data)
         .add_yaxis(
-            "Avg Debt (10k)", 
+            "Avg Debt (10k)",
             y_data_items,  # 传入字典列表
             category_gap="30%"
         )
@@ -518,7 +518,7 @@ def plot_city_rank(df):
 def plot_geo_debt_map_comprehensive(df):
     """图6: 城市债务地图"""
     if 'final_city_name' not in df.columns: return None
-    
+
     df_city = df.groupby('final_city_name').apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
@@ -540,7 +540,7 @@ def plot_geo_debt_map_comprehensive(df):
 
     df_city[['lat', 'lon']] = df_city['final_city_name'].apply(get_lat_lon_city)
     df_plot = df_city.dropna(subset=['lat', 'lon'])
-    
+
     if df_plot.empty: return None
 
     df_plot = df_plot.sort_values('avg_debt', ascending=False).head(80)
@@ -551,11 +551,11 @@ def plot_geo_debt_map_comprehensive(df):
         df_plot,
         lat='lat',
         lon='lon',
-        size='avg_debt_10k',    
-        color='Risk Ratio',     
+        size='avg_debt_10k',
+        color='Risk Ratio',
         hover_name='final_city_name',
         size_max=25,
-        color_continuous_scale='RdYlBu_r', 
+        color_continuous_scale='RdYlBu_r',
         scope='asia',
         title=f"Key City Debt Map (Size=Burden, Color=Risk)"
     )
@@ -568,7 +568,7 @@ def plot_geo_debt_map_comprehensive(df):
     return fig
 
 def plot_debt_sunburst(df):
-    """图7: 旭日图 (绝对债务金额)"""
+    """旭日图 (绝对债务金额)"""
     df_sun = df.copy()
     if 'rural' in df_sun.columns:
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -584,16 +584,16 @@ def plot_debt_sunburst(df):
     df_sun['prov_pinyin'] = df_sun['prov_pinyin'].fillna('Unknown') # Ensure pinyin column is filled
 
     # Changed 'prov' to 'prov_pinyin' in required_cols
-    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] 
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label']
     for col in required_cols:
         if col not in df_sun.columns: return None
-    
+
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
     df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
-    
+
     fig = px.sunburst(
         df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # Changed 'prov' to 'prov_pinyin'
-        values='weighted_debt', 
+        values='weighted_debt',
         title="Hierarchical View: Where is the Total Debt Concentrated? (Absolute Debt)",
         color='weighted_debt', color_continuous_scale='RdBu_r'
     )
@@ -632,7 +632,7 @@ def plot_debt_income_ratio_sunburst(df):
         lambda x: x['total_weighted_debt'] / x['total_weighted_income'] if x['total_weighted_income'] > 0 else 0,
         axis=1
     )
-    
+
     # Filter out extremely high ratios that might skew visualization due to zero income
     df_agg = df_agg[df_agg['debt_income_ratio'] < 1000] # Cap the ratio for better visualization, adjust as needed
 
@@ -642,7 +642,7 @@ def plot_debt_income_ratio_sunburst(df):
         df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'],
         values='debt_income_ratio', # Use debt_income_ratio for values
         title="Hierarchical View: Debt-to-Income Ratio by Demographics",
-        color='debt_income_ratio', 
+        color='debt_income_ratio',
         color_continuous_scale='RdYlGn_r' # Use a diverging scale for ratios, green for low, red for high
     )
     fig.update_layout(margin=dict(t=40, l=0, r=0, b=0), height=600)
@@ -657,22 +657,22 @@ with st.sidebar:
     st.header("📂 Data Source")
     DEFAULT_MASTER = "chfs2019_master_202112.csv"
     DEFAULT_HH = "chfs2019_hh_202112.csv"
-    
+
     upload_files = st.file_uploader("Upload CSV Files (Optional)", type=['csv'], accept_multiple_files=True)
     master_path, hh_path = None, None
-    
+
     if upload_files:
         for f in upload_files:
             if "master" in f.name: master_path = f
             if "hh" in f.name: hh_path = f
-    
+
     if not master_path and os.path.exists("chfs2019_master_202112.csv"):
         master_path = "chfs2019_master_202112.csv"
         hh_path = "chfs2019_hh_202112.csv"
     elif not master_path and os.path.exists(DEFAULT_MASTER):
         master_path = DEFAULT_MASTER
         hh_path = DEFAULT_HH
-        
+
     st.info("若未上传文件，将尝试加载默认路径或当前目录文件。")
 
 st.title("🇨🇳CHFS-Based Analysis of Chinese Household Debt")
@@ -696,7 +696,7 @@ if master_path and hh_path:
         #kpi_cols[3].metric("Indebted Households", f"{households_with_debt:.1%}")
 
         st.markdown("---")
-        
+
         # Row 1
         row1_col1, row1_col2 = st.columns([1, 1])
         with row1_col1:
@@ -716,20 +716,20 @@ if master_path and hh_path:
                 st.plotly_chart(fig_map, use_container_width=True)
             else:
                 st.warning("No provincial data found.")
-            
+
         with row2_col2:
             st.subheader("4. City Tier Leverage Distribution ")
             chart_tier = plot_city_tier_boxplot(df)
-            if chart_tier: 
+            if chart_tier:
                 st.plotly_chart(chart_tier, use_container_width=True)
             else:
                 st.info("Insufficient data for distribution analysis.")
-            
+
         # Row 3 (Absolute Debt Sunburst Chart - now explicitly named)
         st.markdown("---")
         st.subheader("5. Hierarchical Debt Distribution (Absolute Debt)")
         st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
-        
+
         chart_sun_absolute = plot_debt_sunburst(df)
         if chart_sun_absolute:
             st.plotly_chart(chart_sun_absolute, use_container_width=True)
@@ -740,24 +740,24 @@ if master_path and hh_path:
         st.markdown("---")
         st.subheader("6. Hierarchical Debt-to-Income Ratio Distribution")
         st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
-        
+
         chart_sun_ratio = plot_debt_income_ratio_sunburst(df)
         if chart_sun_ratio:
             st.plotly_chart(chart_sun_ratio, use_container_width=True)
         else:
             st.warning("Data missing for Debt-to-Income Ratio Sunburst Chart.")
-    
+
 
         # Row 4 (Original charts, re-indexed)
         row4_col1, row4_col2 = st.columns([1, 1])
         with row4_col1:
             st.subheader("7. Key City Debt & Risk Map")
             chart_geo = plot_geo_debt_map_comprehensive(df)
-            if chart_geo: 
+            if chart_geo:
                 st.plotly_chart(chart_geo, use_container_width=True)
-            else: 
+            else:
                 st.info("Not enough city data matched to coordinates.")
-            
+
         with row4_col2:
             st.subheader("8. City Debt Rankings (Top 5 vs Bottom 5)")
             chart_rank = plot_city_rank(df)
