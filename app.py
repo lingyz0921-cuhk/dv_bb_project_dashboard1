@@ -4,53 +4,43 @@ import re
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Line
 from pyecharts.globals import ThemeType
+from pyecharts.commons.utils import JsCode
 from streamlit_echarts import st_pyecharts
 import plotly.express as px
 import os
-import numpy as np 
 
 # ==========================================
-# 0. Global Configuration and Color Definition
+# 0. 全局配置与颜色定义
 # ==========================================
 COLOR_BLUE = "#5470c6"
 COLOR_YELLOW = "#fac858"
 COLOR_BG = "#ffffff"
-PLOTLY_CONFIG = {'displayModeBar': False} # Configuration to suppress the deprecation warning
 
-# Set page configuration
 st.set_page_config(
-    page_title="中国家庭债务分析大屏 | CHFS",
+    page_title="中国家庭债务分析大屏 | CHFS Dashboard",
     page_icon="🇨🇳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS styles - Enhance KPI visualization
 st.markdown("""
 <style>
     .block-container {padding-top: 1.5rem; padding-bottom: 3rem;}
-    /* Optimize stMetric font size and style */
-    .stMetric > div[data-testid="stMetricValue"] {
-        font-size: 2.2rem !important;
-        font-weight: 700;
-        color: #333;
-    }
     .stMetric {
         background-color: #f8f9fa;
-        padding: 20px; /* Increase padding */
+        padding: 15px;
         border-radius: 10px;
-        border-left: 6px solid #5470c6; /* Bold blue accent line on the left */
-        box-shadow: 0 4px 10px rgba(0,0,0,0.08); /* Increase shadow depth */
+        border-left: 5px solid #5470c6;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
-    h1, h2, h3 {font-family: 'Segoe UI', sans-serif; color: #333;}
-    /* Adjust Streamlit Subheader spacing */
-    h3 {margin-top: 0.5rem; margin-bottom: 0.8rem;}
+    h1, h2, h3 {font-family: 'Microsoft YaHei', sans-serif; color: #333;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. Core Dictionaries: City Code Mapping and Coordinates (Keep as is)
+# 1. 核心字典：城市代码映射与坐标 (保持正确版本)
 # ==========================================
+# (代码映射表与坐标字典保持不变，为节省篇幅此处折叠，请保留原有的完整字典)
 COMPREHENSIVE_CITY_CODE_MAP = {
     20130201: '北京', 2013020101: '北京', 2013020102: '北京', 2013020103: '北京',
     20110201: '上海', 2011020101: '上海', 2011020102: '上海',
@@ -568,7 +558,7 @@ def plot_geo_debt_map_comprehensive(df):
     return fig
 
 def plot_debt_sunburst(df):
-    """图7: 旭日图 (绝对债务金额)"""
+    """旭日图 (绝对债务金额)"""
     df_sun = df.copy()
     if 'rural' in df_sun.columns:
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -579,20 +569,16 @@ def plot_debt_sunburst(df):
         df_sun['prov_pinyin'] = df_sun['prov'].map(PROVINCE_PINYIN_MAP).fillna(df_sun['prov'])
     else: return None
 
-    df_sun['tier_label'] = df_sun['tier_label'].fillna('Unknown')
-    df_sun['region_en'] = df_sun['region_en'].fillna('Unknown')
-    df_sun['prov_pinyin'] = df_sun['prov_pinyin'].fillna('Unknown') # Ensure pinyin column is filled
-
-    # Changed 'prov' to 'prov_pinyin' in required_cols
     required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] 
     for col in required_cols:
         if col not in df_sun.columns: return None
+        df_sun[col] = df_sun[col].fillna('Unknown')
     
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
     df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
     
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # Changed 'prov' to 'prov_pinyin'
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], 
         values='weighted_debt', 
         title="Hierarchical View: Where is the Total Debt Concentrated? (Absolute Debt)",
         color='weighted_debt', color_continuous_scale='RdBu_r'
@@ -601,7 +587,7 @@ def plot_debt_sunburst(df):
     return fig
 
 def plot_debt_income_ratio_sunburst(df):
-    """新图: 旭日图 (债务收入比)"""
+    """新图: 旭日图 (债务收入比) - 改进颜色对比度"""
     df_sun = df.copy()
     if 'rural' in df_sun.columns:
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -617,33 +603,40 @@ def plot_debt_income_ratio_sunburst(df):
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
 
-    # Calculate weighted total debt and weighted total income
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
     df_sun['weighted_income'] = df_sun['total_income'] * df_sun['weight_hh']
 
-    # Group by the hierarchy and sum weighted debt and income
     df_agg = df_sun.groupby(required_cols).agg(
         total_weighted_debt=('weighted_debt', 'sum'),
         total_weighted_income=('weighted_income', 'sum')
     ).reset_index()
 
-    # Calculate the Debt-to-Income Ratio for each group
     df_agg['debt_income_ratio'] = df_agg.apply(
         lambda x: x['total_weighted_debt'] / x['total_weighted_income'] if x['total_weighted_income'] > 0 else 0,
         axis=1
     )
     
     # Filter out extremely high ratios that might skew visualization due to zero income
-    df_agg = df_agg[df_agg['debt_income_ratio'] < 1000] # Cap the ratio for better visualization, adjust as needed
+    # 或者用一个更合理的最大值来替代。例如，如果D/I大于10就被认为是异常高，可以设置为10。
+    # 这里我们先尝试一个相对宽松的上限，并观察效果。
+    df_agg['debt_income_ratio'] = df_agg['debt_income_ratio'].clip(upper=5) # 将比率上限设为5，防止极端值影响颜色。可根据实际数据分布调整。
+
 
     if df_agg.empty: return None
 
     fig = px.sunburst(
         df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'],
-        values='debt_income_ratio', # Use debt_income_ratio for values
-        title="Hierarchical View: Debt-to-Income Ratio by Demographics",
+        values='debt_income_ratio', 
+        title="Hierarchical View: Debt-to-Income Ratio by Demographics (Risk Level)",
         color='debt_income_ratio', 
-        color_continuous_scale='RdYlGn_r' # Use a diverging scale for ratios, green for low, red for high
+        # 尝试一个更发散的颜色刻度，并在中间值附近有更明显的区分。
+        # 'Plasma', 'Viridis', 'Inferno' 等都是不错的选择，或自定义。
+        # 'RdYlGn_r' 是红黄绿反转，红色代表高风险（高比率），绿色代表低风险。
+        color_continuous_scale=px.colors.sequential.RdYlGn_r, 
+        # 设定颜色范围，让颜色更聚焦在常见的债务收入比区间
+        color_continuous_midpoint=df_agg['debt_income_ratio'].median(), # 中点设为中位数
+        range_color=[df_agg['debt_income_ratio'].min(), df_agg['debt_income_ratio'].max() * 0.8] # 动态调整，但稍微压缩高值以增强对比
+        # 如果你确定大部分值在某个范围，可以手动设置如：range_color=[0, 3]
     )
     fig.update_layout(margin=dict(t=40, l=0, r=0, b=0), height=600)
     return fig
@@ -728,7 +721,7 @@ if master_path and hh_path:
         # Row 3 (Absolute Debt Sunburst Chart - now explicitly named)
         st.markdown("---")
         st.subheader("5. Hierarchical Debt Distribution (Absolute Debt)")
-        st.markdown("**Hierarchy:** Urban/Rural > Region > Province  > City Tier")
+        st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
         
         chart_sun_absolute = plot_debt_sunburst(df)
         if chart_sun_absolute:
@@ -739,7 +732,7 @@ if master_path and hh_path:
         # New Row for Debt-to-Income Ratio Sunburst Chart
         st.markdown("---")
         st.subheader("6. Hierarchical Debt-to-Income Ratio Distribution")
-        st.markdown("**Hierarchy:** Urban/Rural > Region > Province > City Tier")
+        st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
         
         chart_sun_ratio = plot_debt_income_ratio_sunburst(df)
         if chart_sun_ratio:
