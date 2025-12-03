@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import re
@@ -598,7 +597,7 @@ with st.sidebar:
         
     st.info("若未上传文件，将尝试加载默认路径或当前目录文件。")
 
-st.title("🇨🇳 China Household Finance Survey (CHFS) Analysis")
+st.title("🇨🇳CHFS-Based Analysis of Chinese Household Debt")
 st.markdown("### Macro-Regional & City Analysis")
 
 if master_path and hh_path:
