@@ -570,6 +570,8 @@ def plot_geo_debt_map_comprehensive(df):
     )
     return fig
 
+from pypinyin import pinyin, Style
+
 def plot_debt_sunburst(df):
     """图7: 旭日图"""
     df_sun = df.copy()
@@ -577,16 +579,27 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] # path中直接用拼音prov
+    required_cols = ['rural_str', 'region_en', 'prov', 'tier_label']
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
 
+    # === 新增代码：将省份名称转换为拼音 ===
+    def convert_to_pinyin(text):
+        if isinstance(text, str) and all('\u4e00' <= char <= '\u9fff' for char in text):
+            return ''.join([s[0] for s in pinyin(text, style=Style.NORMAL)])
+        return text
+
+    df_sun['prov_pinyin'] = df_sun['prov'].apply(convert_to_pinyin)
+    # ====================================
+
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
-    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
+
+    # === 修改 path 参数，使用 'prov_pinyin' ===
+    df_agg = df_sun.groupby(['rural_str', 'region_en', 'prov_pinyin', 'tier_label'])['weighted_debt'].sum().reset_index()
 
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # path 调整，只用拼音
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # <--- 这里改为 'prov_pinyin'
         values='weighted_debt',
         title="Hierarchical View: Where is the Total Debt Concentrated?",
         color='weighted_debt', color_continuous_scale='RdBu_r'
