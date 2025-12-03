@@ -321,21 +321,22 @@ def plot_regional_stack(df):
     """图2"""
     if 'region_en' not in df.columns: return None
 
-    df_agg = df.groupby(['region_en', 'rural']).apply(
-        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
-        include_groups=False
-    ).reset_index(name='avg')
+    df_agg = df.groupby(['region_en', 'rural'], group_keys=False).apply(
+        lambda x: pd.Series({
+            'avg_debt': (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
+        })
+    ).reset_index()
 
     pivot = df_agg.pivot(index='region_en', columns='rural', values='avg').fillna(0)
     regions = pivot.index.tolist()
     urban_data = (pivot[0] / 10000).round(2).tolist()
     rural_data = (pivot[1] / 10000).round(2).tolist()
 
-    df_ratio = df.groupby('region_en').apply(
+    df_ratio = df.groupby('region_en', group_keys=False).apply(
         lambda x: pd.Series({
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'total_w_income': (x['total_income'] * x['weight_hh']).sum()
-        }), include_groups=False
+        })
     ).reset_index()
 
     df_ratio = df_ratio.set_index('region_en').reindex(regions).reset_index()
@@ -378,13 +379,12 @@ def plot_regional_stack(df):
 
 def plot_china_map_plotly(df):
     """图3"""
-    # 确保 df 包含 prov_pinyin
     df_prov = df.groupby('prov', group_keys=False).apply(
         lambda x: pd.Series({
             'avg_debt': (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'total_w_income': (x['total_income'] * x['weight_hh']).sum(),
-            'prov_pinyin_agg': x['prov_pinyin'].iloc[0] if 'prov_pinyin' in x.columns and not x['prov_pinyin'].empty else None # 取第一个拼音名
+            'prov_pinyin_display': x['prov_pinyin'].iloc[0] if 'prov_pinyin' in x.columns and not x['prov_pinyin'].empty else None # 取第一个拼音名
         }), include_groups=False
     ).reset_index()
 
@@ -399,15 +399,15 @@ def plot_china_map_plotly(df):
         return pd.Series([None, None])
 
     df_prov[['lat', 'lon']] = df_prov['prov'].apply(get_lat_lon)
-    df_plot = df_prov.dropna(subset=['lat', 'lon'])
+    df_plot = df_prov.dropna(subset=['lat', 'lon', 'prov_pinyin_display']) # 确保拼音列不为空
 
     if df_plot.empty: return None
 
-    # Hover name 使用拼音，tooltip 组合中文和拼音
+    # Hover name 使用拼音，hover_data 只显示拼音和数值
     fig = px.scatter_geo(
         df_plot, lat='lat', lon='lon', size='avg_debt_10k', color='ratio_display',
-        hover_name='prov_pinyin_agg', # 显示拼音
-        hover_data={'prov': True, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # hover_data 保持原始中文和数值
+        hover_name='prov_pinyin_display', # 显示拼音
+        hover_data={'prov_pinyin_display': False, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # 隐藏原始prov，只显示拼音和数值
         size_max=35, color_continuous_scale='RdYlBu_r',
         scope='asia', title="Provincial Debt Map: Volume vs. Risk"
     )
@@ -469,11 +469,11 @@ def plot_city_rank(df):
     df_valid = df.dropna(subset=['final_city_name', 'final_city_pinyin'])
 
     # 1. 数据计算
-    df_city_agg = df_valid.groupby(['final_city_name', 'final_city_pinyin']).apply(
+    df_city_agg = df_valid.groupby(['final_city_name', 'final_city_pinyin'], group_keys=False).apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_weight': x['weight_hh'].sum()
-        }), include_groups=False
+        })
     ).reset_index()
 
     df_city_agg['weighted_avg_debt'] = df_city_agg['w_debt'] / df_city_agg['w_weight']
@@ -484,10 +484,10 @@ def plot_city_rank(df):
 
     overall_val = (df_valid['total_debt'] * df_valid['weight_hh']).sum() / df_valid['weight_hh'].sum() / 10000
 
-    # 2. X 轴标签 - 同时显示中文和拼音
-    x_data = [f"Top{i+1}\n{row['final_city_name']}\n({row['final_city_pinyin']})" for i, row in top5.iterrows()] + \
+    # 2. X 轴标签 - 只显示拼音
+    x_data = [f"Top{i+1}\n{row['final_city_pinyin']}" for i, row in top5.iterrows()] + \
              ["National\nAvg"] + \
-             [f"Last{i+1}\n{row['final_city_name']}\n({row['final_city_pinyin']})" for i, row in bottom5.iterrows()]
+             [f"Last{i+1}\n{row['final_city_pinyin']}" for i, row in bottom5.iterrows()]
 
     # 3. Y 轴数据 - 使用字典格式
     y_data_items = []
@@ -538,12 +538,12 @@ def plot_geo_debt_map_comprehensive(df):
     """图6: 城市债务地图"""
     if 'final_city_name' not in df.columns or 'final_city_pinyin' not in df.columns: return None
 
-    df_city = df.groupby(['final_city_name', 'final_city_pinyin']).apply(
+    df_city = df.groupby(['final_city_name', 'final_city_pinyin'], group_keys=False).apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_income': (x['total_income'] * x['weight_hh']).sum(),
             'sum_weight': x['weight_hh'].sum()
-        }), include_groups=False
+        })
     ).reset_index()
 
     df_city['avg_debt'] = df_city['w_debt'] / df_city['sum_weight']
@@ -553,12 +553,12 @@ def plot_geo_debt_map_comprehensive(df):
 
     def get_lat_lon_city(city_name):
         if city_name in COMPREHENSIVE_CITY_COORDS:
-            coords = COMPREHENSIVE_CITY_COORDS[city_name]
+            coords = COMPREHRENSIVE_CITY_COORDS[city_name]
             return pd.Series([coords[1], coords[0]])
         return pd.Series([None, None])
 
     df_city[['lat', 'lon']] = df_city['final_city_name'].apply(get_lat_lon_city)
-    df_plot = df_city.dropna(subset=['lat', 'lon'])
+    df_plot = df_city.dropna(subset=['lat', 'lon', 'final_city_pinyin']) # 确保拼音列不为空
 
     if df_plot.empty: return None
 
@@ -573,7 +573,7 @@ def plot_geo_debt_map_comprehensive(df):
         size='avg_debt_10k',
         color='Risk Ratio',
         hover_name='final_city_pinyin', # hover name 使用拼音
-        hover_data={'final_city_name': True, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # hover data 保持原始中文和数值
+        hover_data={'final_city_pinyin': False, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # 隐藏原始中文，只显示拼音和数值
         size_max=25,
         color_continuous_scale='RdYlBu_r',
         scope='asia',
@@ -594,20 +594,16 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    # 确保有拼音列，如果缺失则填充 'Unknown'，或者直接使用中文列
-    required_cols = ['rural_str', 'region_en', 'prov', 'tier_label'] # 路径中先用中文prov
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] # path中直接用拼音prov
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
 
-    # 为了在 Sunburst tooltip 中显示拼音，可以创建中文+拼音的组合列
-    df_sun['prov_display'] = df_sun.apply(lambda row: f"{row['prov']} ({row['prov_pinyin']})" if row['prov_pinyin'] and row['prov'] else row['prov'], axis=1)
-
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
-    df_agg = df_sun.groupby(['rural_str', 'region_en', 'prov_display', 'tier_label'])['weighted_debt'].sum().reset_index() # 使用组合显示列
+    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index() # 使用拼音列进行聚合
 
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov_display', 'tier_label'], # path 调整
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # path 调整，只用拼音
         values='weighted_debt',
         title="Hierarchical View: Where is the Total Debt Concentrated?",
         color='weighted_debt', color_continuous_scale='RdBu_r'
