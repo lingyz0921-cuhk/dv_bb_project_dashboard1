@@ -114,12 +114,11 @@ PROVINCE_COORDS = {
 # ==========================================
 
 # --- 拼音转换辅助函数 ---
-def chinese_to_pinyin(text, sep='', capitalize_first=True, remove_suffixes=True): # 新增 remove_suffixes 参数
+def chinese_to_pinyin(text, sep='', capitalize_first=True):
     """
     将字符串中的连续中文段翻译成拼音：
     - sep: 拼音音节间分隔符，''（连写）或 ' '（空格分开）
     - capitalize_first: 是否将连续中文段第一个字母大写（便于显示）
-    - remove_suffixes: 是否移除常见的行政区划后缀 (sheng, shi)
     """
     if text is None:
         return None
@@ -136,16 +135,7 @@ def chinese_to_pinyin(text, sep='', capitalize_first=True, remove_suffixes=True)
             out_parts.append(pinyin)
         else:
             out_parts.append(p)
-
-    final_pinyin = ''.join(out_parts)
-
-    if remove_suffixes:
-        # 移除常见的行政区划拼音后缀
-        final_pinyin = re.sub(r'(Sheng|Shi|Qu|Xian|Zizhiqu|Diqu)$', '', final_pinyin, flags=re.IGNORECASE)
-        # 对于直辖市，可能转换后直接就是城市名，不需要移除后缀
-        # 比如 "Beijing Shi" -> "Beijing"
-        # 对于省份，比如 "Guangdong Sheng" -> "Guangdong"
-    return final_pinyin
+    return ''.join(out_parts)
 
 # --- 关键清洗函数：应用新的映射逻辑 ---
 def convert_city_name_advanced(val):
@@ -235,12 +225,12 @@ def load_and_clean_data(master_file, hh_file):
 
         # --- 新增：生成拼音列 ---
         if 'final_city_name' in df.columns:
-            df['final_city_pinyin'] = df['final_city_name'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True, remove_suffixes=True))
+            df['final_city_pinyin'] = df['final_city_name'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True))
         else:
             df['final_city_pinyin'] = None
 
         if 'prov' in df.columns:
-            df['prov_pinyin'] = df['prov'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True, remove_suffixes=True))
+            df['prov_pinyin'] = df['prov'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True))
         else:
             df['prov_pinyin'] = None
         # --- 结束新增 ---
@@ -387,8 +377,7 @@ def plot_china_map_plotly(df):
     fig = px.scatter_geo(
         df_plot, lat='lat', lon='lon', size='avg_debt_10k', color='ratio_display',
         hover_name='prov_pinyin_display', # 显示拼音
-        # 彻底隐藏原始中文，只显示拼音显示名和数值
-        hover_data={'prov_pinyin_display': True, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False},
+        hover_data={'prov_pinyin_display': True, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # 隐藏原始prov，只显示拼音和数值
         size_max=35, color_continuous_scale='RdYlBu_r',
         scope='asia', title="Provincial Debt Map: Volume vs. Risk"
     )
@@ -554,8 +543,7 @@ def plot_geo_debt_map_comprehensive(df):
         size='avg_debt_10k',
         color='Risk Ratio',
         hover_name='final_city_pinyin', # hover name 使用拼音
-        # 彻底隐藏原始中文，只显示拼音显示名和数值
-        hover_data={'final_city_pinyin': True, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False},
+        hover_data={'final_city_pinyin': True, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # 隐藏原始中文，只显示拼音和数值
         size_max=25,
         color_continuous_scale='RdYlBu_r',
         scope='asia',
@@ -576,7 +564,8 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] # path中直接用拼音prov
+    # required_cols 现在直接使用拼音列
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label']
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
