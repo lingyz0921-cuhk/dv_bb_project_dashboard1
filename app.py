@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import re
 from pyecharts import options as opts
-from pyecharts.charts import Bar, Line
+from pyecharts.charts import Bar, Line, Sunburst
 from pyecharts.globals import ThemeType
 from pyecharts.commons.utils import JsCode
 from streamlit_echarts import st_pyecharts
 import plotly.express as px
 import os
+from pypinyin import lazy_pinyin # 新增导入 pypinyin
 
 # ==========================================
 # 0. 全局配置与颜色定义
@@ -17,7 +18,7 @@ COLOR_YELLOW = "#fac858"
 COLOR_BG = "#ffffff"
 
 st.set_page_config(
-    page_title="中国家庭债务分析大屏 | CHFS Dashboard",
+    page_title="CHFS China Household Debt Analysis | Dashboard", # 标题调整
     page_icon="🇨🇳",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -141,6 +142,30 @@ PROVINCE_COORDS = {
 # 2. 数据处理与清洗函数
 # ==========================================
 
+# --- 拼音转换辅助函数 ---
+def chinese_to_pinyin(text, sep='', capitalize_first=True):
+    """
+    将字符串中的连续中文段翻译成拼音：
+    - sep: 拼音音节间分隔符，''（连写）或 ' '（空格分开）
+    - capitalize_first: 是否将连续中文段第一个字母大写（便于显示）
+    """
+    if text is None:
+        return None
+    s = str(text)
+    # 保留非中文段，单独转换连续中文段
+    parts = re.split(r'([\u4e00-\u9fff]+)', s)
+    out_parts = []
+    for p in parts:
+        if re.match(r'^[\u4e00-\u9fff]+$', p):
+            pinyin = sep.join(lazy_pinyin(p))
+            if capitalize_first and pinyin:
+                # 确保转换后首字母大写，其余小写，例如 "Beijing" 而非 "beijing" 或 "BEIJING"
+                pinyin = pinyin.capitalize()
+            out_parts.append(pinyin)
+        else:
+            out_parts.append(p)
+    return ''.join(out_parts)
+
 # --- 关键清洗函数：应用新的映射逻辑 ---
 def convert_city_name_advanced(val):
     if pd.isna(val): return None
@@ -189,14 +214,14 @@ def clean_city_name_for_map(name):
 def load_and_clean_data(master_file, hh_file):
     try:
         # 只读取需要的列
-        master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income', 
+        master_cols = ['hhid', 'rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income',
                        'city_lab', 'city_level', 'region', 'prov']
         hh_cols = ['hhid', 'house01num']
-        
+
         master = pd.read_csv(master_file, low_memory=False, usecols=lambda x: x in master_cols)
         hh = pd.read_csv(hh_file, low_memory=False, usecols=lambda x: x in hh_cols)
         df = master.merge(hh[['hhid', 'house01num']], on='hhid', how='left')
-        
+
         numeric_cols = ['rural', 'total_debt', 'total_asset', 'weight_hh', 'total_income']
         for col in numeric_cols:
             if col in df.columns:
@@ -205,7 +230,7 @@ def load_and_clean_data(master_file, hh_file):
         df = df[df['weight_hh'] > 0].copy()
         df['total_debt'] = df['total_debt'].fillna(0).clip(lower=0)
         df['total_income'] = df['total_income'].fillna(0).clip(lower=0)
-        
+
         if 'city_lab' in df.columns:
             df['city_raw'] = df['city_lab']
             df['city_mapped'] = df['city_lab'].apply(convert_city_name_advanced)
@@ -226,10 +251,22 @@ def load_and_clean_data(master_file, hh_file):
         if 'region' in df.columns:
              region_mapping = {'东部': 'East', '中部': 'Central', '西部': 'West', '东北': 'Northeast'}
              df['region_en'] = df['region'].map(region_mapping).fillna(df['region'])
-             
+
+        # --- 新增：生成拼音列 ---
+        if 'final_city_name' in df.columns:
+            df['final_city_pinyin'] = df['final_city_name'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True))
+        else:
+            df['final_city_pinyin'] = None
+
+        if 'prov' in df.columns:
+            df['prov_pinyin'] = df['prov'].apply(lambda x: chinese_to_pinyin(x, sep='', capitalize_first=True))
+        else:
+            df['prov_pinyin'] = None
+        # --- 结束新增 ---
+
         return df
     except Exception as e:
-        st.error(f"数据加载失败: {e}")
+        st.error(f"Data loading failed: {e}") # 错误提示改为英文
         return None
 
 # ==========================================
@@ -237,7 +274,7 @@ def load_and_clean_data(master_file, hh_file):
 # ==========================================
 
 AXIS_GRAY = "#6E7079"
-LEFT_AXIS_NAME = "Avg Debt (10k)"
+LEFT_AXIS_NAME = "Avg Debt (10k RMB)" # 轴名称调整
 RIGHT_AXIS_NAME = "D/I Ratio"
 
 def plot_urban_rural(df):
@@ -248,7 +285,7 @@ def plot_urban_rural(df):
             'avg_income': (x['total_income'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
         }), include_groups=False
     ).reset_index()
-    
+
     df_rural['avg_debt_10k'] = df_rural['avg_debt'] / 10000
     df_rural['d_i_ratio'] = df_rural['avg_debt'] / df_rural['avg_income']
     df_rural['rural_name'] = df_rural['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -283,33 +320,33 @@ def plot_urban_rural(df):
 def plot_regional_stack(df):
     """图2"""
     if 'region_en' not in df.columns: return None
-    
+
     df_agg = df.groupby(['region_en', 'rural']).apply(
-        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(), 
+        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
         include_groups=False
     ).reset_index(name='avg')
-    
+
     pivot = df_agg.pivot(index='region_en', columns='rural', values='avg').fillna(0)
     regions = pivot.index.tolist()
     urban_data = (pivot[0] / 10000).round(2).tolist()
     rural_data = (pivot[1] / 10000).round(2).tolist()
-    
+
     df_ratio = df.groupby('region_en').apply(
         lambda x: pd.Series({
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'total_w_income': (x['total_income'] * x['weight_hh']).sum()
         }), include_groups=False
     ).reset_index()
-    
+
     df_ratio = df_ratio.set_index('region_en').reindex(regions).reset_index()
     df_ratio['d_i_ratio'] = df_ratio['total_w_debt'] / df_ratio['total_w_income']
     ratio_data = df_ratio['d_i_ratio'].round(2).tolist()
-    
+
     bar = (
         Bar(init_opts=opts.InitOpts(theme=ThemeType.LIGHT))
         .add_xaxis(regions)
-        .add_yaxis("Urban Debt", urban_data, stack="stack1", color=COLOR_BLUE, bar_width="40%")
-        .add_yaxis("Rural Debt", rural_data, stack="stack1", color="#72b0ea") 
+        .add_yaxis("Urban Debt (10k)", urban_data, stack="stack1", color=COLOR_BLUE, bar_width="40%") # 图例调整
+        .add_yaxis("Rural Debt (10k)", rural_data, stack="stack1", color="#72b0ea") # 图例调整
         .extend_axis(
             yaxis=opts.AxisOpts(
                 name=RIGHT_AXIS_NAME, type_="value", min_=0, position="right", name_location="end",
@@ -328,12 +365,12 @@ def plot_regional_stack(df):
             legend_opts=opts.LegendOpts(pos_top="0%")
         )
     )
-    
+
     line = (
         Line()
         .add_xaxis(regions)
         .add_yaxis(
-            RIGHT_AXIS_NAME, ratio_data, yaxis_index=1, color=COLOR_YELLOW, 
+            RIGHT_AXIS_NAME, ratio_data, yaxis_index=1, color=COLOR_YELLOW,
             symbol="circle", symbol_size=8, is_smooth=True, linestyle_opts=opts.LineStyleOpts(width=3), z=10
         )
     )
@@ -341,11 +378,13 @@ def plot_regional_stack(df):
 
 def plot_china_map_plotly(df):
     """图3"""
+    # 确保 df 包含 prov_pinyin
     df_prov = df.groupby('prov', group_keys=False).apply(
         lambda x: pd.Series({
             'avg_debt': (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
             'total_w_debt': (x['total_debt'] * x['weight_hh']).sum(),
-            'total_w_income': (x['total_income'] * x['weight_hh']).sum()
+            'total_w_income': (x['total_income'] * x['weight_hh']).sum(),
+            'prov_pinyin_agg': x['prov_pinyin'].iloc[0] if 'prov_pinyin' in x.columns and not x['prov_pinyin'].empty else None # 取第一个拼音名
         }), include_groups=False
     ).reset_index()
 
@@ -361,12 +400,15 @@ def plot_china_map_plotly(df):
 
     df_prov[['lat', 'lon']] = df_prov['prov'].apply(get_lat_lon)
     df_plot = df_prov.dropna(subset=['lat', 'lon'])
-    
+
     if df_plot.empty: return None
 
+    # Hover name 使用拼音，tooltip 组合中文和拼音
     fig = px.scatter_geo(
         df_plot, lat='lat', lon='lon', size='avg_debt_10k', color='ratio_display',
-        hover_name='prov', size_max=35, color_continuous_scale='RdYlBu_r', 
+        hover_name='prov_pinyin_agg', # 显示拼音
+        hover_data={'prov': True, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # hover_data 保持原始中文和数值
+        size_max=35, color_continuous_scale='RdYlBu_r',
         scope='asia', title="Provincial Debt Map: Volume vs. Risk"
     )
     fig.update_layout(
@@ -382,13 +424,13 @@ def plot_city_tier_boxplot(df):
     改动：从 Ratio 改为 绝对金额，以展示明显的层级差异
     """
     if 'tier_label' not in df.columns: return None
-    
+
     # 1. 数据准备
     df_plot = df[df['tier_label'] != 'Other'].copy()
-    
+
     # 2. 数据清洗：只保留有负债的家庭
     df_valid = df_plot[df_plot['total_debt'] > 0]
-    
+
     if df_valid.empty: return None
 
     # 3. 定义排序逻辑
@@ -396,40 +438,38 @@ def plot_city_tier_boxplot(df):
 
     # 4. 绘制箱线图
     fig = px.box(
-        df_valid, 
-        x="tier_label", 
-        y="total_debt",  # <--- 关键修改：看绝对金额，不再看比例
-        title="Distribution of Household Total Debt Amount (by Tier)",
+        df_valid,
+        x="tier_label",
+        y="total_debt",
+        title="Distribution of Household Total Debt Amount (by City Tier)",
         color_discrete_sequence=[COLOR_BLUE], # 统一使用主题蓝
-        category_orders={"tier_label": tier_order}, 
+        category_orders={"tier_label": tier_order},
         notched=True
     )
-    
+
     # 5. 样式优化
     fig.update_layout(
         height=400,
-        xaxis_title=None,
+        xaxis_title="City Tier", # 增加X轴标题
         yaxis_title="Total Debt (RMB)",
         showlegend=False,
         yaxis=dict(
             gridcolor='#eee',
             zerolinecolor='#eee',
-            # 【关键】设置显示范围：0 到 300万。
-            # 如果你的数据里大部分人负债都在100万以内，可以改成 1000000
-            # 这样能过滤掉极少数的超级富豪，让箱体看起来更清楚
-            range=[0, 3000000] 
+            # 设置显示范围：0 到 300万。
+            range=[0, 3000000]
         )
     )
-    
+
     return fig
 
 def plot_city_rank(df):
     """图5: 城市排名 (Top黄色，Bottom绿色) - 字典兼容版"""
-    if 'final_city_name' not in df.columns: return None
-    df_valid = df.dropna(subset=['final_city_name'])
+    if 'final_city_name' not in df.columns or 'final_city_pinyin' not in df.columns: return None
+    df_valid = df.dropna(subset=['final_city_name', 'final_city_pinyin'])
 
     # 1. 数据计算
-    df_city_agg = df_valid.groupby('final_city_name').apply(
+    df_city_agg = df_valid.groupby(['final_city_name', 'final_city_pinyin']).apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_weight': x['weight_hh'].sum()
@@ -441,18 +481,17 @@ def plot_city_rank(df):
 
     top5 = df_city_agg.head(5).reset_index(drop=True)
     bottom5 = df_city_agg.tail(5).sort_values('weighted_avg_debt', ascending=True).reset_index(drop=True)
-    
+
     overall_val = (df_valid['total_debt'] * df_valid['weight_hh']).sum() / df_valid['weight_hh'].sum() / 10000
 
-    # 2. X 轴标签
-    x_data = [f"Top{i+1}\n{n}" for i,n in enumerate(top5['final_city_name'])] + \
+    # 2. X 轴标签 - 同时显示中文和拼音
+    x_data = [f"Top{i+1}\n{row['final_city_name']}\n({row['final_city_pinyin']})" for i, row in top5.iterrows()] + \
              ["National\nAvg"] + \
-             [f"Last{i+1}\n{n}" for i,n in enumerate(bottom5['final_city_name'])]
+             [f"Last{i+1}\n{row['final_city_name']}\n({row['final_city_pinyin']})" for i, row in bottom5.iterrows()]
 
-    # 3. Y 轴数据 - 使用字典格式，避免 opts.BarItem 报错
+    # 3. Y 轴数据 - 使用字典格式
     y_data_items = []
 
-    # 颜色定义
     COLOR_TOP = "#fac858"   # 黄色
     COLOR_AVG = "#c0c4c6"   # 灰色
     COLOR_BOT = "#91cc75"   # 绿色
@@ -482,24 +521,24 @@ def plot_city_rank(df):
         Bar()
         .add_xaxis(x_data)
         .add_yaxis(
-            "Avg Debt (10k)", 
+            "Avg Debt (10k RMB)",
             y_data_items,  # 传入字典列表
             category_gap="30%"
         )
         .set_global_opts(
             title_opts=opts.TitleOpts(title="City Debt Ranking: Extremes vs. Average"),
             yaxis_opts=opts.AxisOpts(name="10k RMB"),
-            xaxis_opts=opts.AxisOpts(axislabel_opts=opts.LabelOpts(rotate=0, font_size=10)),
-            legend_opts=opts.LegendOpts(is_show=False) # 隐藏图例，因为颜色已能说明问题
+            xaxis_opts=opts.AxisOpts(axislabel_opts=opts.LabelOpts(rotate=-30, font_size=10)), # 旋转标签以便显示
+            legend_opts=opts.LegendOpts(is_show=False)
         )
     )
     return c
 
 def plot_geo_debt_map_comprehensive(df):
     """图6: 城市债务地图"""
-    if 'final_city_name' not in df.columns: return None
-    
-    df_city = df.groupby('final_city_name').apply(
+    if 'final_city_name' not in df.columns or 'final_city_pinyin' not in df.columns: return None
+
+    df_city = df.groupby(['final_city_name', 'final_city_pinyin']).apply(
         lambda x: pd.Series({
             'w_debt': (x['total_debt'] * x['weight_hh']).sum(),
             'w_income': (x['total_income'] * x['weight_hh']).sum(),
@@ -520,10 +559,10 @@ def plot_geo_debt_map_comprehensive(df):
 
     df_city[['lat', 'lon']] = df_city['final_city_name'].apply(get_lat_lon_city)
     df_plot = df_city.dropna(subset=['lat', 'lon'])
-    
+
     if df_plot.empty: return None
 
-    df_plot = df_plot.sort_values('avg_debt', ascending=False).head(80)
+    df_plot = df_plot.sort_values('avg_debt', ascending=False).head(80) # 限制显示城市数量，避免过载
     df_plot['avg_debt_10k'] = (df_plot['avg_debt'] / 10000).round(2)
     df_plot['Risk Ratio'] = df_plot['d_i_ratio'].round(2)
 
@@ -531,11 +570,12 @@ def plot_geo_debt_map_comprehensive(df):
         df_plot,
         lat='lat',
         lon='lon',
-        size='avg_debt_10k',    
-        color='Risk Ratio',     
-        hover_name='final_city_name',
+        size='avg_debt_10k',
+        color='Risk Ratio',
+        hover_name='final_city_pinyin', # hover name 使用拼音
+        hover_data={'final_city_name': True, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # hover data 保持原始中文和数值
         size_max=25,
-        color_continuous_scale='RdYlBu_r', 
+        color_continuous_scale='RdYlBu_r',
         scope='asia',
         title=f"Key City Debt Map (Size=Burden, Color=Risk)"
     )
@@ -554,17 +594,21 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    required_cols = ['rural_str', 'region_en', 'prov', 'tier_label']
+    # 确保有拼音列，如果缺失则填充 'Unknown'，或者直接使用中文列
+    required_cols = ['rural_str', 'region_en', 'prov', 'tier_label'] # 路径中先用中文prov
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
-    
+
+    # 为了在 Sunburst tooltip 中显示拼音，可以创建中文+拼音的组合列
+    df_sun['prov_display'] = df_sun.apply(lambda row: f"{row['prov']} ({row['prov_pinyin']})" if row['prov_pinyin'] and row['prov'] else row['prov'], axis=1)
+
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
-    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
-    
+    df_agg = df_sun.groupby(['rural_str', 'region_en', 'prov_display', 'tier_label'])['weighted_debt'].sum().reset_index() # 使用组合显示列
+
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov', 'tier_label'],
-        values='weighted_debt', 
+        df_agg, path=['rural_str', 'region_en', 'prov_display', 'tier_label'], # path 调整
+        values='weighted_debt',
         title="Hierarchical View: Where is the Total Debt Concentrated?",
         color='weighted_debt', color_continuous_scale='RdBu_r'
     )
@@ -579,26 +623,26 @@ with st.sidebar:
     st.header("📂 Data Source")
     DEFAULT_MASTER = "chfs2019_master_202112.csv"
     DEFAULT_HH = "chfs2019_hh_202112.csv"
-    
+
     upload_files = st.file_uploader("Upload CSV Files (Optional)", type=['csv'], accept_multiple_files=True)
     master_path, hh_path = None, None
-    
+
     if upload_files:
         for f in upload_files:
             if "master" in f.name: master_path = f
             if "hh" in f.name: hh_path = f
-    
+
     if not master_path and os.path.exists("chfs2019_master_202112.csv"):
         master_path = "chfs2019_master_202112.csv"
         hh_path = "chfs2019_hh_202112.csv"
     elif not master_path and os.path.exists(DEFAULT_MASTER):
         master_path = DEFAULT_MASTER
         hh_path = DEFAULT_HH
-        
-    st.info("若未上传文件，将尝试加载默认路径或当前目录文件。")
 
-st.title("🇨🇳CHFS-Based Analysis of Chinese Household Debt")
-st.markdown("### Macro-Regional & City Analysis")
+    st.info("If no file is uploaded, default files from the repository will be loaded.") # 提示改为英文
+
+st.title("🇨🇳CHFS-Based Analysis of Chinese Household Debt") # 标题调整
+st.markdown("### Macro-Regional & City Analysis") # 副标题调整
 
 if master_path and hh_path:
     with st.spinner("Loading and Processing Data..."):
@@ -615,10 +659,10 @@ if master_path and hh_path:
         kpi_cols[0].metric("Avg Household Debt", f"¥{weighted_avg_debt:,.0f}")
         kpi_cols[1].metric("Avg Household Income", f"¥{weighted_avg_income:,.0f}")
         kpi_cols[2].metric("Debt-to-Income Ratio", f"{debt_ratio:.1%}", delta_color="inverse")
-        #kpi_cols[3].metric("Indebted Households", f"{households_with_debt:.1%}")
+        #kpi_cols[3].metric("Indebted Households", f"{households_with_debt:.1%}") # 暂时不显示这个
 
         st.markdown("---")
-        
+
         # Row 1
         row1_col1, row1_col2 = st.columns([1, 1])
         with row1_col1:
@@ -638,44 +682,43 @@ if master_path and hh_path:
                 st.plotly_chart(fig_map, use_container_width=True)
             else:
                 st.warning("No provincial data found.")
-            
+
         with row2_col2:
             st.subheader("4. City Tier Leverage Distribution ")
-            # 修改这里：调用新的箱线图函数
             chart_tier = plot_city_tier_boxplot(df)
-            if chart_tier: 
+            if chart_tier:
                 st.plotly_chart(chart_tier, use_container_width=True)
             else:
                 st.info("Insufficient data for distribution analysis.")
-            
+
         # Row 3
         st.markdown("---")
         st.subheader("5. Hierarchical Debt Distribution")
         st.markdown("**Hierarchy:** Urban/Rural > Region > Province > City Tier")
-        
+
         chart_sun = plot_debt_sunburst(df)
         if chart_sun:
             st.plotly_chart(chart_sun, use_container_width=True)
         else:
             st.warning("Data missing for Sunburst Chart.")
-    
+
 
         # Row 4
         row3_col1, row3_col2 = st.columns([1, 1])
         with row3_col1:
             st.subheader("6. Key City Debt & Risk Map")
             chart_geo = plot_geo_debt_map_comprehensive(df)
-            if chart_geo: 
+            if chart_geo:
                 st.plotly_chart(chart_geo, use_container_width=True)
-            else: 
+            else:
                 st.info("Not enough city data matched to coordinates.")
-            
+
         with row3_col2:
             st.subheader("7. City Debt Rankings (Top 5 vs Bottom 5)")
             chart_rank = plot_city_rank(df)
             if chart_rank: st_pyecharts(chart_rank, height="450px")
 
     else:
-        st.error("无法处理数据，请检查文件格式。")
+        st.error("Unable to process data. Please check file format.") # 错误提示改为英文
 else:
-    st.warning("⚠️ Data files not found. Please upload CSVs.")
+    st.warning("⚠️ Data files not found. Please upload CSVs or ensure they are in the default path.") # 警告提示改为英文
