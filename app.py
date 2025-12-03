@@ -4,43 +4,53 @@ import re
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Line
 from pyecharts.globals import ThemeType
-from pyecharts.commons.utils import JsCode
 from streamlit_echarts import st_pyecharts
 import plotly.express as px
 import os
+import numpy as np 
 
 # ==========================================
-# 0. 全局配置与颜色定义
+# 0. Global Configuration and Color Definition
 # ==========================================
 COLOR_BLUE = "#5470c6"
 COLOR_YELLOW = "#fac858"
 COLOR_BG = "#ffffff"
+PLOTLY_CONFIG = {'displayModeBar': False} # Configuration to suppress the deprecation warning
 
+# Set page configuration
 st.set_page_config(
-    page_title="中国家庭债务分析大屏 | CHFS Dashboard",
+    page_title="中国家庭债务分析大屏 | CHFS",
     page_icon="🇨🇳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS styles - Enhance KPI visualization
 st.markdown("""
 <style>
     .block-container {padding-top: 1.5rem; padding-bottom: 3rem;}
+    /* Optimize stMetric font size and style */
+    .stMetric > div[data-testid="stMetricValue"] {
+        font-size: 2.2rem !important;
+        font-weight: 700;
+        color: #333;
+    }
     .stMetric {
         background-color: #f8f9fa;
-        padding: 15px;
+        padding: 20px; /* Increase padding */
         border-radius: 10px;
-        border-left: 5px solid #5470c6;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        border-left: 6px solid #5470c6; /* Bold blue accent line on the left */
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08); /* Increase shadow depth */
     }
-    h1, h2, h3 {font-family: 'Microsoft YaHei', sans-serif; color: #333;}
+    h1, h2, h3 {font-family: 'Segoe UI', sans-serif; color: #333;}
+    /* Adjust Streamlit Subheader spacing */
+    h3 {margin-top: 0.5rem; margin-bottom: 0.8rem;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 核心字典：城市代码映射与坐标 (保持正确版本)
+# 1. Core Dictionaries: City Code Mapping and Coordinates (Keep as is)
 # ==========================================
-# (代码映射表与坐标字典保持不变，为节省篇幅此处折叠，请保留原有的完整字典)
 COMPREHENSIVE_CITY_CODE_MAP = {
     20130201: '北京', 2013020101: '北京', 2013020102: '北京', 2013020103: '北京',
     20110201: '上海', 2011020101: '上海', 2011020102: '上海',
@@ -569,16 +579,20 @@ def plot_debt_sunburst(df):
         df_sun['prov_pinyin'] = df_sun['prov'].map(PROVINCE_PINYIN_MAP).fillna(df_sun['prov'])
     else: return None
 
+    df_sun['tier_label'] = df_sun['tier_label'].fillna('Unknown')
+    df_sun['region_en'] = df_sun['region_en'].fillna('Unknown')
+    df_sun['prov_pinyin'] = df_sun['prov_pinyin'].fillna('Unknown') # Ensure pinyin column is filled
+
+    # Changed 'prov' to 'prov_pinyin' in required_cols
     required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] 
     for col in required_cols:
         if col not in df_sun.columns: return None
-        df_sun[col] = df_sun[col].fillna('Unknown')
     
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
     df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
     
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], 
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # Changed 'prov' to 'prov_pinyin'
         values='weighted_debt', 
         title="Hierarchical View: Where is the Total Debt Concentrated? (Absolute Debt)",
         color='weighted_debt', color_continuous_scale='RdBu_r'
