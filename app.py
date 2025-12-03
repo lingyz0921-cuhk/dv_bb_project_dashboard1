@@ -558,7 +558,7 @@ def plot_geo_debt_map_comprehensive(df):
     return fig
 
 def plot_debt_sunburst(df):
-    """图7: 旭日图"""
+    """图7: 旭日图 (绝对债务金额)"""
     df_sun = df.copy()
     if 'rural' in df_sun.columns:
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
@@ -569,7 +569,7 @@ def plot_debt_sunburst(df):
         df_sun['prov_pinyin'] = df_sun['prov'].map(PROVINCE_PINYIN_MAP).fillna(df_sun['prov'])
     else: return None
 
-    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] # Changed 'prov' to 'prov_pinyin'
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] 
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
@@ -578,13 +578,62 @@ def plot_debt_sunburst(df):
     df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
     
     fig = px.sunburst(
-        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # Changed 'prov' to 'prov_pinyin'
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], 
         values='weighted_debt', 
-        title="Hierarchical View: Where is the Total Debt Concentrated?",
+        title="Hierarchical View: Where is the Total Debt Concentrated? (Absolute Debt)",
         color='weighted_debt', color_continuous_scale='RdBu_r'
     )
     fig.update_layout(margin=dict(t=40, l=0, r=0, b=0), height=600)
     return fig
+
+def plot_debt_income_ratio_sunburst(df):
+    """新图: 旭日图 (债务收入比)"""
+    df_sun = df.copy()
+    if 'rural' in df_sun.columns:
+        df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
+    else: return None
+
+    # Map Chinese province names to Pinyin
+    if 'prov' in df_sun.columns:
+        df_sun['prov_pinyin'] = df_sun['prov'].map(PROVINCE_PINYIN_MAP).fillna(df_sun['prov'])
+    else: return None
+
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label']
+    for col in required_cols:
+        if col not in df_sun.columns: return None
+        df_sun[col] = df_sun[col].fillna('Unknown')
+
+    # Calculate weighted total debt and weighted total income
+    df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
+    df_sun['weighted_income'] = df_sun['total_income'] * df_sun['weight_hh']
+
+    # Group by the hierarchy and sum weighted debt and income
+    df_agg = df_sun.groupby(required_cols).agg(
+        total_weighted_debt=('weighted_debt', 'sum'),
+        total_weighted_income=('weighted_income', 'sum')
+    ).reset_index()
+
+    # Calculate the Debt-to-Income Ratio for each group
+    df_agg['debt_income_ratio'] = df_agg.apply(
+        lambda x: x['total_weighted_debt'] / x['total_weighted_income'] if x['total_weighted_income'] > 0 else 0,
+        axis=1
+    )
+    
+    # Filter out extremely high ratios that might skew visualization due to zero income
+    df_agg = df_agg[df_agg['debt_income_ratio'] < 1000] # Cap the ratio for better visualization, adjust as needed
+
+    if df_agg.empty: return None
+
+    fig = px.sunburst(
+        df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'],
+        values='debt_income_ratio', # Use debt_income_ratio for values
+        title="Hierarchical View: Debt-to-Income Ratio by Demographics",
+        color='debt_income_ratio', 
+        color_continuous_scale='RdYlGn_r' # Use a diverging scale for ratios, green for low, red for high
+    )
+    fig.update_layout(margin=dict(t=40, l=0, r=0, b=0), height=600)
+    return fig
+
 
 # ==========================================
 # 5. 主程序逻辑
@@ -656,37 +705,47 @@ if master_path and hh_path:
             
         with row2_col2:
             st.subheader("4. City Tier Leverage Distribution ")
-            # 修改这里：调用新的箱线图函数
             chart_tier = plot_city_tier_boxplot(df)
             if chart_tier: 
                 st.plotly_chart(chart_tier, use_container_width=True)
             else:
                 st.info("Insufficient data for distribution analysis.")
             
-        # Row 3
+        # Row 3 (Absolute Debt Sunburst Chart - now explicitly named)
         st.markdown("---")
-        st.subheader("5. Hierarchical Debt Distribution")
-        st.markdown("**Hierarchy:** Urban/Rural > Region > Province > City Tier")
+        st.subheader("5. Hierarchical Debt Distribution (Absolute Debt)")
+        st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
         
-        chart_sun = plot_debt_sunburst(df)
-        if chart_sun:
-            st.plotly_chart(chart_sun, use_container_width=True)
+        chart_sun_absolute = plot_debt_sunburst(df)
+        if chart_sun_absolute:
+            st.plotly_chart(chart_sun_absolute, use_container_width=True)
         else:
-            st.warning("Data missing for Sunburst Chart.")
+            st.warning("Data missing for Absolute Debt Sunburst Chart.")
+
+        # New Row for Debt-to-Income Ratio Sunburst Chart
+        st.markdown("---")
+        st.subheader("6. Hierarchical Debt-to-Income Ratio Distribution")
+        st.markdown("**Hierarchy:** Urban/Rural > Region > Province (Pinyin) > City Tier")
+        
+        chart_sun_ratio = plot_debt_income_ratio_sunburst(df)
+        if chart_sun_ratio:
+            st.plotly_chart(chart_sun_ratio, use_container_width=True)
+        else:
+            st.warning("Data missing for Debt-to-Income Ratio Sunburst Chart.")
     
 
-        # Row 4
-        row3_col1, row3_col2 = st.columns([1, 1])
-        with row3_col1:
-            st.subheader("6. Key City Debt & Risk Map")
+        # Row 4 (Original charts, re-indexed)
+        row4_col1, row4_col2 = st.columns([1, 1])
+        with row4_col1:
+            st.subheader("7. Key City Debt & Risk Map")
             chart_geo = plot_geo_debt_map_comprehensive(df)
             if chart_geo: 
                 st.plotly_chart(chart_geo, use_container_width=True)
             else: 
                 st.info("Not enough city data matched to coordinates.")
             
-        with row3_col2:
-            st.subheader("7. City Debt Rankings (Top 5 vs Bottom 5)")
+        with row4_col2:
+            st.subheader("8. City Debt Rankings (Top 5 vs Bottom 5)")
             chart_rank = plot_city_rank(df)
             if chart_rank: st_pyecharts(chart_rank, height="450px")
 
