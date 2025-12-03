@@ -94,35 +94,6 @@ COMPREHENSIVE_CITY_CODE_MAP = {
     20150906: '无锡'
 }
 
-COMPREHENSIVE_CITY_COORDS = {
-    "北京": [116.40, 39.90], "上海": [121.48, 31.22], "天津": [117.20, 39.12], "重庆": [106.55, 29.57],
-    "石家庄": [114.48, 38.03], "太原": [112.54, 37.87], "呼和浩特": [111.74, 40.84],
-    "沈阳": [123.38, 41.80], "长春": [125.35, 43.88], "哈尔滨": [126.63, 45.75],
-    "南京": [118.78, 32.04], "杭州": [120.19, 30.26], "合肥": [117.22, 31.82],
-    "福州": [119.30, 26.08], "南昌": [115.85, 28.68], "济南": [117.00, 36.65],
-    "郑州": [113.62, 34.75], "武汉": [114.30, 30.60], "长沙": [112.93, 28.23],
-    "广州": [113.23, 23.16], "南宁": [108.36, 22.81], "海口": [110.32, 20.03],
-    "成都": [104.06, 30.67], "贵阳": [106.63, 26.64], "昆明": [102.83, 24.88],
-    "拉萨": [91.11, 29.97], "西安": [108.93, 34.27], "兰州": [103.83, 36.06],
-    "西宁": [101.77, 36.62], "银川": [106.23, 38.48], "乌鲁木齐": [87.61, 43.82],
-    "大连": [121.62, 38.92], "青岛": [120.33, 36.07], "宁波": [121.55, 29.88],
-    "厦门": [118.10, 24.46], "深圳": [114.07, 22.62], "苏州": [120.62, 31.32],
-    "无锡": [120.30, 31.57], "佛山": [113.12, 23.02], "东莞": [113.75, 23.04],
-    "唐山": [118.18, 39.63], "烟台": [121.39, 37.52], "温州": [120.70, 28.00],
-    "泉州": [118.58, 24.93], "常州": [119.95, 31.78], "徐州": [117.20, 34.26],
-    "潍坊": [119.10, 36.70], "淄博": [118.05, 36.78], "绍兴": [120.58, 30.01],
-    "台州": [121.42, 28.65], "金华": [119.65, 29.08], "嘉兴": [120.75, 30.75],
-    "湖州": [120.08, 30.90], "扬州": [119.42, 32.39], "镇江": [119.45, 32.20],
-    "泰州": [119.90, 32.49], "盐城": [120.13, 33.38], "淮安": [119.02, 33.62],
-    "连云港": [119.22, 34.60], "宿迁": [118.28, 33.97], "衢州": [118.87, 28.97],
-    "舟山": [122.20, 30.00], "丽水": [119.92, 28.45],
-    "包头": [109.82, 40.65], "鞍山": [122.85, 41.12], "抚顺": [123.97, 41.97],
-    "吉林": [126.57, 43.87], "齐齐哈尔": [123.97, 47.33], "大庆": [125.03, 46.58],
-    "牡丹江": [129.58, 44.58], "锦州": [121.13, 41.10], "营口": [122.23, 40.67],
-    "阜新": [121.67, 42.02], "辽阳": [123.17, 41.27], "盘锦": [122.07, 41.12],
-    "铁岭": [123.85, 42.32], "朝阳": [120.45, 41.58], "葫芦岛": [120.83, 40.72]
-}
-
 PROVINCE_COORDS = {
     "北京": [116.40, 39.90], "天津": [117.20, 39.12], "河北": [114.48, 38.03],
     "山西": [112.53, 37.87], "内蒙古": [111.65, 40.82], "辽宁": [123.38, 41.80],
@@ -321,11 +292,10 @@ def plot_regional_stack(df):
     """图2"""
     if 'region_en' not in df.columns: return None
 
+    # 修正：确保聚合结果生成了名为 'avg' 的列
     df_agg = df.groupby(['region_en', 'rural'], group_keys=False).apply(
-        lambda x: pd.Series({
-            'avg_debt': (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum(),
-        })
-    ).reset_index()
+        lambda x: (x['total_debt'] * x['weight_hh']).sum() / x['weight_hh'].sum()
+    ).reset_index(name='avg') # <--- 这里加上 name='avg'
 
     pivot = df_agg.pivot(index='region_en', columns='rural', values='avg').fillna(0)
     regions = pivot.index.tolist()
@@ -407,7 +377,7 @@ def plot_china_map_plotly(df):
     fig = px.scatter_geo(
         df_plot, lat='lat', lon='lon', size='avg_debt_10k', color='ratio_display',
         hover_name='prov_pinyin_display', # 显示拼音
-        hover_data={'prov_pinyin_display': False, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # 隐藏原始prov，只显示拼音和数值
+        hover_data={'prov_pinyin_display': True, 'avg_debt_10k': True, 'ratio_display': True, 'lat': False, 'lon': False}, # 隐藏原始prov，只显示拼音和数值
         size_max=35, color_continuous_scale='RdYlBu_r',
         scope='asia', title="Provincial Debt Map: Volume vs. Risk"
     )
@@ -553,7 +523,7 @@ def plot_geo_debt_map_comprehensive(df):
 
     def get_lat_lon_city(city_name):
         if city_name in COMPREHENSIVE_CITY_COORDS:
-            coords = COMPREHRENSIVE_CITY_COORDS[city_name]
+            coords = COMPREHENSIVE_CITY_COORDS[city_name]
             return pd.Series([coords[1], coords[0]])
         return pd.Series([None, None])
 
@@ -573,7 +543,7 @@ def plot_geo_debt_map_comprehensive(df):
         size='avg_debt_10k',
         color='Risk Ratio',
         hover_name='final_city_pinyin', # hover name 使用拼音
-        hover_data={'final_city_pinyin': False, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # 隐藏原始中文，只显示拼音和数值
+        hover_data={'final_city_pinyin': True, 'avg_debt_10k': True, 'Risk Ratio': True, 'lat': False, 'lon': False}, # 隐藏原始中文，只显示拼音和数值
         size_max=25,
         color_continuous_scale='RdYlBu_r',
         scope='asia',
@@ -594,13 +564,14 @@ def plot_debt_sunburst(df):
         df_sun['rural_str'] = df_sun['rural'].map({0: 'Urban', 1: 'Rural'})
     else: return None
 
-    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label'] # path中直接用拼音prov
+    # required_cols 现在直接使用拼音列
+    required_cols = ['rural_str', 'region_en', 'prov_pinyin', 'tier_label']
     for col in required_cols:
         if col not in df_sun.columns: return None
         df_sun[col] = df_sun[col].fillna('Unknown')
 
     df_sun['weighted_debt'] = df_sun['total_debt'] * df_sun['weight_hh']
-    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index() # 使用拼音列进行聚合
+    df_agg = df_sun.groupby(required_cols)['weighted_debt'].sum().reset_index()
 
     fig = px.sunburst(
         df_agg, path=['rural_str', 'region_en', 'prov_pinyin', 'tier_label'], # path 调整，只用拼音
